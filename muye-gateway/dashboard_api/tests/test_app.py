@@ -15,6 +15,8 @@ import pytest
 from dashboard_api.app import ServiceDefinition, create_app
 
 WEB_ROOT = Path(__file__).resolve().parents[2] / "dashboard" / "web"
+LUCIDE_CDN_URL = "https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"
+LUCIDE_INTEGRITY = "sha384-uTYyvsSSUZeaPhb5RbKlQa0zY/WpX/QHfvg2mczXyBQOpkWPEDy9lczyp+w7SKXu"
 
 
 def _get(app: object, path: str) -> httpx.Response:
@@ -91,6 +93,18 @@ def test_services_marks_unreachable_service_offline() -> None:
     service = _get(app, "/services").json()["services"][0]
     assert service["online"] is False
     assert service["message"] == "健康检查不可用"
+
+
+def test_console_uses_pinned_lucide_cdn() -> None:
+    """控制台应从经过完整性校验的固定版本 CDN 加载图标。"""
+
+    for page_name in ("index.html", "online.html"):
+        page = (WEB_ROOT / page_name).read_text(encoding="utf-8")
+        assert f'src="{LUCIDE_CDN_URL}"' in page
+        assert f'integrity="{LUCIDE_INTEGRITY}"' in page
+        assert 'crossorigin="anonymous"' in page
+
+    assert not (WEB_ROOT / "lucide.js").exists()
 
 
 def test_online_console_renders_sse_blocks_separately() -> None:

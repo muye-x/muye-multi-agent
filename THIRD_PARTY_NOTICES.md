@@ -4,7 +4,7 @@ This repository includes or adapts the following third-party software.
 
 ## Lucide
 
-`muye-gateway/dashboard/web/lucide.js` contains Lucide v0.468.0.
+The Dashboard loads Lucide v0.468.0 from a version-pinned jsDelivr URL.
 Upstream project: https://github.com/lucide-icons/lucide/tree/0.468.0
 
 ISC License
