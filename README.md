@@ -7,18 +7,17 @@ Muye Multi-Agent Scaffold 是一个基于
 
 ## 界面预览
 
-<table>
-  <tr>
-    <th>服务概览</th>
-    <th>SDK 架构与部署</th>
-    <th>在线体验</th>
-  </tr>
-  <tr>
-    <td><img src="docs/images/dashboard-overview.png" alt="Muye 运维控制台的服务拓扑与实时状态" width="100%"></td>
-    <td><img src="docs/images/sdk-deployment-guide.png" alt="Muye SDK 架构与部署说明" width="100%"></td>
-    <td><img src="docs/images/online-experience.png" alt="Muye Multi-Agent 在线对话体验" width="100%"></td>
-  </tr>
-</table>
+### 服务概览
+
+![Muye 运维控制台的服务拓扑与实时状态](docs/images/dashboard-overview.png)
+
+### SDK 架构与部署
+
+![Muye SDK 架构与部署说明](docs/images/sdk-deployment-guide.png)
+
+### 在线体验
+
+![Muye Multi-Agent 在线对话体验](docs/images/online-experience.png)
 
 ## 架构
 
@@ -76,9 +75,8 @@ python3 -m venv .venv
 cp .env.example .env
 ```
 
-`MUYE_LLM_API_KEY` 与 `MUYE_LLM_EMBED_API_KEY` 是当前 LLM 服务启动所需配置；默认模型必须
-存在于 `MUYE_LLM_MODELS_JSON`，主 Agent 使用的 `MUYE_LLM_MODEL` 也必须存在于同一注册表。
-根启动器会在启动任何子进程前给出缺失项或格式错误。
+`MUYE_LLM_API_KEY` 与 `MUYE_LLM_EMBED_API_KEY` 是当前 LLM 服务启动所需配置；默认模型和主 Agent 使用的 `MUYE_LLM_MODEL` 必须
+存在于 `MUYE_LLM_MODELS_JSON`。
 
 通过根启动器运行时，配置优先级为：
 
