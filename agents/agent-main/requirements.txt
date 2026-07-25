@@ -1,0 +1,37 @@
+# 主 Agent 运行时直接依赖。固定远端提交，保证独立安装与 CI 可复现。
+muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@e909ead9ec12bb7c2362e87ac16799ee59f358eb
+
+# HTTP API 与配置
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+python-multipart>=0.0.9
+
+# Agent 编排与模型适配
+langchain>=1.2.0
+langchain-core>=1.2.0
+langchain-openai>=1.1.0
+langgraph>=1.1.0
+langgraph-checkpoint-sqlite>=3.0.0
+langgraph-checkpoint-postgres>=3.0.0
+
+# 可选持久化记忆后端
+aiosqlite>=0.20.0
+psycopg[binary,pool]>=3.2.0
+redis>=5.0.0
+motor>=3.6.0
+pymongo>=4.9.0
+
+# 网页检索与内容转换
+ddgs>=9.0.0
+tavily-python>=0.5.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+markdownify>=0.13.0
+readabilipy>=0.3.0
+
+# 开发和测试
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

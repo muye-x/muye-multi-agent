@@ -1,0 +1,42 @@
+map $http_authorization $muye_authorized {
+    default 0;
+    "Bearer ${MUYE_GATEWAY_API_KEY}" 1;
+}
+
+server {
+    listen 80;
+    server_name ${MUYE_GATEWAY_SERVER_NAME};
+    location = /gateway/health { default_type application/json; return 200 '{"status":"healthy"}'; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${MUYE_GATEWAY_SERVER_NAME};
+    ssl_certificate ${MUYE_GATEWAY_TLS_CERTIFICATE};
+    ssl_certificate_key ${MUYE_GATEWAY_TLS_PRIVATE_KEY};
+    client_max_body_size ${MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE};
+    location = /gateway/health { default_type application/json; return 200 '{"status":"healthy"}'; }
+    location /agentMain/ {
+        if ($muye_authorized = 0) { return 401; }
+        proxy_pass ${MUYE_AGENT_MAIN_URL}/;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Host $host;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout ${MUYE_GATEWAY_PROXY_READ_TIMEOUT};
+        proxy_send_timeout ${MUYE_GATEWAY_PROXY_SEND_TIMEOUT};
+    }
+    location /api/v1/travel/ {
+        if ($muye_authorized = 0) { return 401; }
+        proxy_pass ${MUYE_AGENT_TRAVEL_URL}/api/v1/travel/;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout ${MUYE_GATEWAY_PROXY_READ_TIMEOUT};
+        proxy_send_timeout ${MUYE_GATEWAY_PROXY_SEND_TIMEOUT};
+    }
+    location / { return 404; }
+}

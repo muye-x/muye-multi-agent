@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>Muye 在线体验</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
+  <script src="./lucide.js"></script>
+</head>
+<body class="online-body" data-page="online">
+  <div class="app-shell online-shell">
+    <aside class="sidebar" aria-label="会话与连接设置">
+      <div class="sidebar-header">
+        <a class="brand" href="./index.html" aria-label="返回 Muye 运维控制台"><span class="brand-mark" aria-hidden="true">M</span><span><strong>Muye</strong><small>在线体验</small></span></a>
+        <div class="connection-summary" aria-label="连接状态"><span>连接状态</span><span id="connection-dot" class="status-dot" aria-label="服务状态未知"></span></div>
+      </div>
+      <button id="new-chat-wide" class="new-chat-button" type="button"><span>新建对话</span><kbd>⌘ K</kbd></button>
+      <section class="history-section" aria-labelledby="history-title"><div class="sidebar-section-title"><span id="history-title">历史对话</span></div><div id="conversation-history" class="conversation-history" aria-live="polite"></div></section>
+      <div class="sidebar-settings"><label for="agent-select">目标服务</label><select id="agent-select"><option value="main">agent-main · 主编排</option><option value="travel">agent-travel · Travel public</option></select><label for="user-id">User ID</label><input id="user-id" value="operator" maxlength="80" required></div>
+    </aside>
+    <main class="online-workspace">
+      <header class="online-header"><div class="session-heading"><p class="eyebrow">LIVE CONVERSATION</p><span class="session-label">Session ID:</span><output id="session-id" class="session-id" aria-label="当前 Session ID"></output></div><button id="history-toggle" class="icon-button quiet-button history-toggle" type="button" title="显示历史对话" aria-label="显示历史对话" aria-expanded="false"><i data-lucide="panel-left"></i></button></header>
+      <section id="online" class="online-page" aria-label="在线对话">
+        <section id="messages-shell" class="messages-shell" aria-label="对话消息"><div id="chat-output" class="chat-output" aria-live="polite" aria-label="对话响应"></div></section>
+        <form id="chat-form" class="composer"><div class="composer-box"><textarea id="chat-input" rows="1" maxlength="4000" placeholder="Enter 发送 · Shift + Enter 换行" required></textarea><div class="composer-actions"><button id="stop-button" class="stop-button" type="button" title="终止当前请求" disabled><i data-lucide="square"></i><span>终止</span></button><button id="send-button" class="send-button" type="submit" title="发送消息"><span>发送</span><i data-lucide="arrow-up"></i></button></div></div></form>
+      </section>
+    </main>
+  </div>
+  <script src="./app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip pip-audit cyclonedx-bom
+      - run: python -m pip install -r requirements.txt
+      - run: pip-audit
+      - run: cyclonedx-py environment --output-file sbom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - run: PYTHONPATH=muye-llm:muye-gateway python -m pytest -q muye-llm/tests muye-gateway/dashboard_api/tests
+      - run: PYTHONPATH=agents/agent-main python -m pytest -q agents/agent-main/tests
+      - run: PYTHONPATH=agents/agent-travel:agents/agent-order python -m pytest -q agents/agent-travel/tests agents/agent-order/tests
+      - run: python -m pytest -q tests
+      - run: python -m compileall -q muye-llm/src agents/agent-main agents/agent-travel agents/agent-order muye-gateway/dashboard_api
+      - run: python main.py --dry-run
+
+  workspace-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: test "$(find . -type d -name .git | wc -l)" -eq 1
+      - run: test -z "$(find . -type f -name '*:Zone.Identifier' -print -quit)"
+      - run: test -z "$(find . -type d \( -name .codex -o -name .agents -o -name .claude -o -name .cursor -o -name .continue -o -name .pytest_cache -o -name __pycache__ \) -print -quit)"
+      - run: test -z "$(find . -type f \( \( -name '.env*' ! -name '.env.example' \) -o -name 'env.example' -o -name '*.db*' -o -name '*.sqlite*' -o -name '*.log*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name '*.crt' \) -print -quit)"
+      - run: test -z "$(find . -type f \( -name 'test_fix.py' -o -name 'test_fix_*.py' -o -name 'test_debug.py' -o -name 'test_debug_*.py' -o -name 'test_temp.py' -o -name 'test_temp_*.py' -o -name 'test_tmp.py' -o -name 'test_tmp_*.py' \) -print -quit)"
