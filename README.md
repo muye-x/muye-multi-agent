@@ -7,6 +7,10 @@ Muye Multi-Agent Scaffold 是一个基于
 
 ## 界面预览
 
+### 架构图
+
+![Muye 运维控制台的服务拓扑与实时状态](docs/images/Muye-Agent架构.png)
+
 ### 服务概览
 
 ![Muye 运维控制台的服务拓扑与实时状态](docs/images/dashboard-overview.png)
