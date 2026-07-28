@@ -10,12 +10,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SDK_DIRECT_REFERENCE = (
     "muye-multi-agent-sdk @ "
     "git+https://github.com/muye-x/muye-multi-agent-sdk.git@"
-    "e909ead9ec12bb7c2362e87ac16799ee59f358eb"
+    "v1.1.0"
 )
 
 
-def test_requirements_use_the_pinned_public_sdk_repository() -> None:
-    """所有可独立安装的 requirements 均应使用同一个公开 SDK 提交。"""
+def test_requirements_use_the_pinned_public_sdk_release() -> None:
+    """所有可独立安装的 requirements 均应使用同一个公开 SDK 发布 tag。"""
     paths = (
         PROJECT_ROOT / "requirements.txt",
         PROJECT_ROOT / "agents" / "agent-main" / "requirements.txt",
@@ -32,8 +32,8 @@ def test_requirements_use_the_pinned_public_sdk_repository() -> None:
         assert declarations == {SDK_DIRECT_REFERENCE}, path
 
 
-def test_packaged_agents_use_the_pinned_public_sdk_repository() -> None:
-    """两个可打包子 Agent 的项目元数据应与 requirements 使用同一 SDK 源。"""
+def test_packaged_agents_use_the_pinned_public_sdk_release() -> None:
+    """两个可打包子 Agent 的项目元数据应与 requirements 使用同一 SDK 发布 tag。"""
     paths = (
         PROJECT_ROOT / "agents" / "agent-travel" / "pyproject.toml",
         PROJECT_ROOT / "agents" / "agent-order" / "pyproject.toml",

@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from dashboard_api.app import ServiceDefinition, create_app
+from dashboard_api.app import ServiceDefinition, _service_definitions, create_app
 
 WEB_ROOT = Path(__file__).resolve().parents[2] / "dashboard" / "web"
 LUCIDE_CDN_URL = "https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"
@@ -93,6 +93,18 @@ def test_services_marks_unreachable_service_offline() -> None:
     service = _get(app, "/services").json()["services"][0]
     assert service["online"] is False
     assert service["message"] == "健康检查不可用"
+
+
+def test_data_service_is_listed_only_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MUYE_DATA_ENABLED", raising=False)
+    assert "muye-data" not in {item.service_id for item in _service_definitions()}
+
+    monkeypatch.setenv("MUYE_DATA_ENABLED", "true")
+    definitions = _service_definitions()
+
+    data_service = next(item for item in definitions if item.service_id == "muye-data")
+    assert data_service.kind == "data"
+    assert data_service.default_profiles == ("internal", "read-only")
 
 
 def test_console_uses_pinned_lucide_cdn() -> None:

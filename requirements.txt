@@ -1,4 +1,5 @@
-muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@e909ead9ec12bb7c2362e87ac16799ee59f358eb
+muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@v1.1.0
 -r ./muye-llm/requirements.txt
+-r ./muye-data/requirements.txt
 -r ./agents/agent-main/requirements.txt
 -r ./muye-gateway/requirements.txt

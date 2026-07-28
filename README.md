@@ -1,8 +1,8 @@
 # Muye Multi-Agent Scaffold
 
 Muye Multi-Agent Scaffold 是一个基于
-[`muye-multi-agent-sdk`](https://github.com/muye-x/muye-multi-agent-sdk) 的多服务参考工程。仓储包含
-统一模型网关、主编排 Agent、两个子 Agent 示例以及可选的 Nginx Gateway；SDK 在独立仓储
+[`muye-multi-agent-sdk`](https://github.com/muye-x/muye-multi-agent-sdk) 的多服务脚手架工程。开发者可以使用该项目快速搭建属于自己的多智能体项目。仓储包含
+统一模型网关、可选只读数据召回服务、主编排 Agent、两个子 Agent 示例以及可选的 Nginx Gateway；SDK 在独立仓储
 维护，并通过 Python 包依赖接入。
 
 ## 界面预览
@@ -29,6 +29,7 @@ Client
           +-- agent-main: 9860
                   |
                   +-- muye-llm: 9850 -> OpenAI-compatible 上游
+                  +-- muye-data: 9840 -> Milvus / OpenSearch（可选、只读）
                   +-- agent-travel: 8011 (internal + public)
                   +-- agent-order: 8012 (internal only)
 ```
@@ -36,6 +37,7 @@ Client
 | 服务 | 端口 | 职责 |
 | --- | ---: | --- |
 | `muye-llm` | 9850 | 模型注册、thinking 校验、Chat/SSE/Embedding 网关 |
+| `muye-data` | 9840 | 查询、Dense/Keyword/Hybrid 召回、融合、Rerank 编排与数据库适配 |
 | `agent-main` | 9860 | 对话、SSE、工具调用与子 Agent 编排 |
 | `agent-travel` | 8011 | ReAct 风格旅行参考 Agent |
 | `agent-order` | 8012 | Graph 风格订单参考 Agent，不执行真实交易 |
@@ -43,7 +45,7 @@ Client
 
 ## 依赖
 
-Python 3.11 或更高版本。核心 SDK 使用 [muye-multi-agent-sdk](https://github.com/muye-x/muye-multi-agent-sdk) v1.0.0。
+Python 3.11 或更高版本。核心 SDK 使用 [muye-multi-agent-sdk](https://github.com/muye-x/muye-multi-agent-sdk) v1.1.0。
 
 ## 安装
 
@@ -64,6 +66,7 @@ python3 -m venv .venv
 | --- | --- | --- |
 | `.env.example` | 全部服务的一键启动聚合配置 | 本地开发、整体联调 |
 | `muye-llm/.env.example` | LLM、Embedding 与可选 LangSmith 配置 | 单独部署 `muye-llm` |
+| `muye-data/.env.example` | 只读数据服务、资源配置文件与数据库凭据引用 | 单独部署 `muye-data` |
 | `agents/agent-main/.env.example` | 主 Agent、存储、检索与子 Agent 地址 | 单独部署 `agent-main` |
 | `agents/agent-travel/.env.example` | Travel Agent 与 SDK 配置 | 单独部署 `agent-travel` |
 | `agents/agent-order/.env.example` | Order Agent 与 SDK 配置 | 单独部署 `agent-order` |
@@ -103,8 +106,9 @@ Shell 环境变量 > 当前服务目录 .env > 源码默认值
 ```
 
 `--dry-run` 只检查服务入口和配置，不启动进程；即使没有真实密钥也可用于 CI 结构检查。
-启动器按 `muye-llm -> agent-main -> agent-travel -> agent-order -> dashboard-api` 顺序等待
-健康检查。本地控制台位于：
+启动器按 `muye-llm -> muye-data（启用时） -> agent-main -> agent-travel -> agent-order -> dashboard-api`
+顺序等待健康检查。`MUYE_DATA_ENABLED=false` 时跳过数据服务，因此默认本地运行不要求
+Milvus 或 OpenSearch。本地控制台位于：
 
 ```text
 http://127.0.0.1:9870/console/online.html
@@ -145,6 +149,11 @@ session_start -> block/tool/thinking -> done -> session_end
 同一 `block.id` 的 `delta` 按到达顺序追加；不同 block ID 必须独立处理。Travel 注册 public
 profile，Order 仅注册 internal profile。
 
+`muye-data` 只公开 `/api/v1/retrieve`、已知资源 capabilities、`/health` 和 `/ready`。
+Agent 通过 SDK 的 `DataClient` 按需调用逻辑 resource alias；不存在公开 `search` 或任何建库、
+写入、更新、删除接口。数据库结构、索引和数据生命周期由独立数据项目负责。完整配置和
+过滤 AST 见 `muye-data/README.md`。
+
 ## 测试
 
 仓储只保留长期质量资产：模块单元测试、服务/协议集成测试和 Gateway 系统 smoke test。测试均
@@ -153,6 +162,8 @@ profile，Order 仅注册 internal profile。
 ```bash
 PYTHONPATH=muye-llm:muye-gateway \
   .venv/bin/python -m pytest -q muye-llm/tests muye-gateway/dashboard_api/tests
+PYTHONPATH=muye-data \
+  .venv/bin/python -m pytest -q muye-data/tests
 PYTHONPATH=agents/agent-main \
   .venv/bin/python -m pytest -q agents/agent-main/tests
 PYTHONPATH=agents/agent-travel:agents/agent-order \
@@ -170,6 +181,8 @@ muye-gateway/scripts/smoke-test.sh
 ## 安全边界
 
 - `agent-order` 仅用于 Graph 和协议演示，不执行真实下单。
+- `muye-data` 与 `muye-llm` 只允许可信内网服务访问；数据库账号必须限制为只读权限。
+- `muye-data` 不负责创建或修改 Collection、Index、表、文档与向量。
 - 生产 Nginx 只公开 `/agentMain/` 与 `/api/v1/travel/`。
 
 项目许可证：[MIT](LICENSE)。内置前端资源及迁移代码的许可证见

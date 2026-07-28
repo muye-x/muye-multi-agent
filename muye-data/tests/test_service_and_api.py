@@ -1,0 +1,457 @@
+"""召回编排、降级策略和只读 HTTP 表面的行为测试。"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import re
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from src.backends.base import BackendCapabilities, BackendHit, DenseBackendQuery, KeywordBackendQuery
+from src.clients.llm import LLMModelCapabilities, RerankScore
+from src.config import DataConfig, ServiceSettings
+from src.contracts import RetrieveRequest
+from src.errors import (
+    BackendUnavailableError,
+    ConfigurationError,
+    EmbeddingUnavailableError,
+    RerankUnavailableError,
+)
+from src.retrieval.service import RetrievalService
+
+
+_MAIN_SPEC = importlib.util.spec_from_file_location(
+    "muye_data_service_main",
+    Path(__file__).resolve().parents[1] / "main.py",
+)
+assert _MAIN_SPEC is not None and _MAIN_SPEC.loader is not None
+_MAIN_MODULE = importlib.util.module_from_spec(_MAIN_SPEC)
+_MAIN_SPEC.loader.exec_module(_MAIN_MODULE)
+create_app = _MAIN_MODULE.create_app
+
+
+def _config() -> DataConfig:
+    return DataConfig.model_validate(
+        {
+            "version": 1,
+            "connections": {"database": {"type": "milvus", "uri": "http://database.test"}},
+            "resources": {
+                "knowledge": {
+                    "connection": "database",
+                    "target": "documents",
+                    "fields": {
+                        "id": "document_id",
+                        "content": "content",
+                        "vector": "embedding",
+                        "keyword": "sparse",
+                        "exposed_fields": {"title": "title", "source": "source"},
+                        "filterable_fields": {"enabled": "enabled"},
+                    },
+                    "embedding": {"model": "embed-v1", "dimensions": 2},
+                    "pipelines": {
+                        "dense": {"type": "dense", "candidate_k": 3},
+                        "keyword": {"type": "keyword", "candidate_k": 3},
+                        "keyword_rerank": {
+                            "type": "keyword",
+                            "candidate_k": 3,
+                            "rerank": {"model": "rerank-v1", "required": False},
+                        },
+                        "keyword_rerank_required": {
+                            "type": "keyword",
+                            "candidate_k": 3,
+                            "rerank": {"model": "rerank-v1", "required": True},
+                        },
+                        "hybrid": {
+                            "type": "hybrid",
+                            "dense_candidate_k": 3,
+                            "keyword_candidate_k": 3,
+                            "dense_weight": 1.0,
+                            "keyword_weight": 1.0,
+                        },
+                    },
+                    "default_pipeline": "hybrid",
+                    "default_return_fields": ["title"],
+                }
+            },
+        }
+    )
+
+
+def _settings(*, retries: int = 0) -> ServiceSettings:
+    return ServiceSettings(
+        host="127.0.0.1",
+        port=9840,
+        workers=1,
+        log_level="INFO",
+        config_path=Path("unused.yaml"),
+        llm_base_url="http://llm.test",
+        llm_timeout_seconds=1.0,
+        backend_timeout_seconds=1.0,
+        total_timeout_seconds=3.0,
+        backend_max_retries=retries,
+        rerank_max_documents=100,
+    )
+
+
+class _FakeBackend:
+    backend_type = "fake"
+    capabilities = BackendCapabilities(dense=True, keyword=True)
+
+    def __init__(self) -> None:
+        self.fail_dense = False
+        self.fail_count = 0
+        self.search_calls: list[Any] = []
+        self.health_calls = 0
+        self.ready = True
+        self.closed = False
+
+    async def search(self, query: DenseBackendQuery | KeywordBackendQuery) -> list[BackendHit]:
+        self.search_calls.append(query)
+        if self.fail_count:
+            self.fail_count -= 1
+            raise BackendUnavailableError()
+        if isinstance(query, DenseBackendQuery):
+            if self.fail_dense:
+                raise BackendUnavailableError()
+            return [
+                BackendHit("a", "Dense A", 0.9, {"title": "A"}),
+                BackendHit("b", "Dense B", 0.8, {"title": "B"}),
+            ]
+        return [
+            BackendHit("b", "Keyword B", 5.0, {"title": "B"}),
+            BackendHit("c", "Keyword C", 4.0, {"title": "C"}),
+        ]
+
+    async def health(self, target: str, *, timeout_seconds: float) -> bool:
+        self.health_calls += 1
+        return self.ready
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _FakeLLM:
+    def __init__(self) -> None:
+        self.embed_error = False
+        self.rerank_error = False
+        self.ready = True
+        self.closed = False
+        self.embedding_models = {"embed-v1"}
+        self.embedding_dimensions: int | None = 2
+        self.rerank_models = {"rerank-v1"}
+
+    async def embed(
+        self,
+        text: str,
+        *,
+        model: str,
+        expected_dimensions: int,
+        trace_id: str,
+    ) -> tuple[float, ...]:
+        if self.embed_error:
+            raise EmbeddingUnavailableError()
+        assert model == "embed-v1"
+        assert expected_dimensions == 2
+        return (0.1, 0.2)
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        *,
+        top_n: int,
+        model: str,
+        trace_id: str,
+    ) -> list[RerankScore]:
+        if self.rerank_error:
+            raise RerankUnavailableError()
+        return [RerankScore(index=index, score=1.0 - index * 0.1) for index in range(top_n)]
+
+    async def model_capabilities(self) -> LLMModelCapabilities | None:
+        if not self.ready:
+            return None
+        return LLMModelCapabilities(
+            embedding_models={
+                model: self.embedding_dimensions for model in self.embedding_models
+            },
+            rerank_models=frozenset(self.rerank_models),
+        )
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _service(
+    *,
+    backend: _FakeBackend | None = None,
+    llm: _FakeLLM | None = None,
+    retries: int = 0,
+) -> tuple[RetrievalService, _FakeBackend, _FakeLLM]:
+    selected_backend = backend or _FakeBackend()
+    selected_llm = llm or _FakeLLM()
+    service = RetrievalService(
+        config=_config(),
+        settings=_settings(retries=retries),
+        backends={"database": selected_backend},
+        llm_client=selected_llm,
+    )
+    return service, selected_backend, selected_llm
+
+
+def test_service_rejects_pipeline_not_supported_by_backend() -> None:
+    backend = _FakeBackend()
+    backend.capabilities = BackendCapabilities(dense=True, keyword=False)
+
+    with pytest.raises(ConfigurationError, match="适配器能力不匹配"):
+        _service(backend=backend)
+
+
+def test_hybrid_retrieval_fuses_channels_and_deduplicates() -> None:
+    service, backend, _ = _service()
+
+    result = asyncio.run(
+        service.retrieve(
+            RetrieveRequest(resource="knowledge", query="refund", top_k=3, trace_id="trace-1")
+        )
+    )
+
+    assert result.trace_id == "trace-1"
+    assert [hit.id for hit in result.hits] == ["b", "a", "c"]
+    assert not result.partial
+    assert len(backend.search_calls) == 2
+
+
+def test_hybrid_degrades_when_optional_dense_channel_fails() -> None:
+    llm = _FakeLLM()
+    llm.embed_error = True
+    service, backend, _ = _service(llm=llm)
+
+    result = asyncio.run(
+        service.retrieve(
+            RetrieveRequest(resource="knowledge", query="refund", pipeline="hybrid", top_k=2)
+        )
+    )
+
+    assert result.partial
+    assert result.warnings == ["DENSE_RETRIEVAL_FAILED"]
+    assert [hit.id for hit in result.hits] == ["b", "c"]
+    assert all(isinstance(call, KeywordBackendQuery) for call in backend.search_calls)
+
+
+def test_optional_rerank_failure_falls_back_to_database_order() -> None:
+    llm = _FakeLLM()
+    llm.rerank_error = True
+    service, _, _ = _service(llm=llm)
+
+    result = asyncio.run(
+        service.retrieve(
+            RetrieveRequest(
+                resource="knowledge",
+                query="refund",
+                pipeline="keyword_rerank",
+                top_k=2,
+            )
+        )
+    )
+
+    assert result.partial
+    assert result.warnings == ["RERANK_FAILED"]
+    assert [hit.id for hit in result.hits] == ["b", "c"]
+
+
+def test_required_rerank_failure_is_returned_as_error() -> None:
+    llm = _FakeLLM()
+    llm.rerank_error = True
+    service, _, _ = _service(llm=llm)
+
+    with pytest.raises(RerankUnavailableError):
+        asyncio.run(
+            service.retrieve(
+                RetrieveRequest(
+                    resource="knowledge",
+                    query="refund",
+                    pipeline="keyword_rerank_required",
+                )
+            )
+        )
+
+
+def test_backend_transient_failure_is_retried_once() -> None:
+    backend = _FakeBackend()
+    backend.fail_count = 1
+    service, _, _ = _service(backend=backend, retries=1)
+
+    result = asyncio.run(
+        service.retrieve(
+            RetrieveRequest(resource="knowledge", query="refund", pipeline="keyword")
+        )
+    )
+
+    assert result.hits
+    assert len(backend.search_calls) == 2
+
+
+def test_capabilities_expose_only_logical_names() -> None:
+    service, _, _ = _service()
+
+    capabilities = service.capabilities("knowledge")
+    payload = capabilities.model_dump()
+
+    assert payload["returnable_fields"] == ["source", "title"]
+    assert payload["filterable_fields"] == ["enabled"]
+    assert "documents" not in str(payload)
+    assert "embedding" not in str(payload)
+
+
+def test_readiness_reports_resource_degradation_without_physical_target() -> None:
+    llm = _FakeLLM()
+    llm.ready = False
+    service, _, _ = _service(llm=llm)
+
+    report, available = asyncio.run(service.readiness())
+
+    assert available
+    assert report.status == "degraded"
+    assert report.resources["knowledge"].status == "degraded"
+    assert "documents" not in str(report)
+
+
+def test_readiness_checks_configured_model_aliases_not_only_process_health() -> None:
+    llm = _FakeLLM()
+    llm.embedding_models.clear()
+    service, _, _ = _service(llm=llm)
+
+    report, available = asyncio.run(service.readiness())
+
+    assert available
+    assert report.status == "degraded"
+    assert report.resources["knowledge"].llm == "degraded"
+
+
+def test_readiness_rejects_registered_embedding_with_wrong_dimensions() -> None:
+    llm = _FakeLLM()
+    llm.embedding_dimensions = 3
+    service, _, _ = _service(llm=llm)
+
+    report, available = asyncio.run(service.readiness())
+
+    assert available
+    assert report.status == "degraded"
+    assert report.resources["knowledge"].llm == "degraded"
+
+
+def test_readiness_degrades_when_embedding_dimension_is_not_declared() -> None:
+    llm = _FakeLLM()
+    llm.embedding_dimensions = None
+    service, _, _ = _service(llm=llm)
+
+    report, available = asyncio.run(service.readiness())
+
+    assert available
+    assert report.status == "degraded"
+    assert report.resources["knowledge"].llm == "degraded"
+
+
+def test_http_surface_is_readonly_and_errors_are_stable() -> None:
+    service, backend, _ = _service()
+    app = create_app(service=service, settings_override=_settings())
+
+    async def run() -> None:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                health = await client.get("/health")
+                assert health.status_code == 200
+                assert backend.health_calls == 0
+
+                readiness = await client.get("/ready")
+                assert readiness.status_code == 200
+                assert readiness.json()["resources"]["knowledge"]["status"] == "ready"
+
+                response = await client.post(
+                    "/api/v1/retrieve",
+                    json={
+                        "resource": "knowledge",
+                        "query": "refund",
+                        "pipeline": "keyword",
+                        "trace_id": "api-trace",
+                    },
+                )
+                assert response.status_code == 200
+                assert response.headers["X-Trace-Id"] == "api-trace"
+
+                capability_response = await client.get(
+                    "/api/v1/resources/knowledge/capabilities",
+                    headers={"X-Trace-Id": "invalid trace"},
+                )
+                generated_trace = capability_response.headers["X-Trace-Id"]
+                assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", generated_trace)
+                assert generated_trace != "invalid trace"
+
+                validation = await client.post(
+                    "/api/v1/retrieve",
+                    json={"resource": "knowledge", "query": "", "trace_id": "bad-trace"},
+                )
+                assert validation.status_code == 422
+                assert validation.json() == {
+                    "error_code": "VALIDATION_ERROR",
+                    "message": "请求参数校验失败",
+                    "recoverable": False,
+                    "trace_id": "bad-trace",
+                }
+
+                assert (await client.post("/api/v1/search", json={})).status_code == 404
+                assert (await client.post("/api/v1/resources", json={})).status_code == 404
+
+    asyncio.run(run())
+
+
+def test_http_rejects_unknown_return_and_filter_fields() -> None:
+    service, _, _ = _service()
+    app = create_app(service=service, settings_override=_settings())
+
+    async def run() -> httpx.Response:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                return await client.post(
+                    "/api/v1/retrieve",
+                    json={
+                        "resource": "knowledge",
+                        "query": "refund",
+                        "pipeline": "keyword",
+                        "return_fields": ["secret"],
+                    },
+                )
+
+    response = asyncio.run(run())
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_REQUEST"
+    assert "secret" not in response.text
+
+
+def test_openapi_declares_stable_error_and_readiness_contracts() -> None:
+    service, _, _ = _service()
+    app = create_app(service=service, settings_override=_settings())
+
+    schema = app.openapi()
+    retrieve_responses = schema["paths"]["/api/v1/retrieve"]["post"]["responses"]
+
+    for status_code in ("400", "404", "422", "502", "503", "504"):
+        response_schema = retrieve_responses[status_code]["content"]["application/json"]["schema"]
+        assert response_schema["$ref"].endswith("/ErrorResponse")
+    ready_responses = schema["paths"]["/ready"]["get"]["responses"]
+    assert ready_responses["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ReadinessResponse"
+    )
+    assert ready_responses["503"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ReadinessResponse"
+    )

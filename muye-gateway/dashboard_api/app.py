@@ -32,7 +32,7 @@ class ServiceDefinition:
 
     service_id: str
     name: str
-    kind: Literal["gateway", "agent", "llm"]
+    kind: Literal["gateway", "agent", "llm", "data"]
     base_url: str
     supports_capabilities: bool = False
     default_profiles: tuple[str, ...] = ()
@@ -43,7 +43,7 @@ class ServiceStatus(BaseModel):
 
     id: str
     name: str
-    kind: Literal["gateway", "agent", "llm"]
+    kind: Literal["gateway", "agent", "llm", "data"]
     online: bool
     latency_ms: int | None = Field(default=None, ge=0)
     profiles: list[str]
@@ -83,7 +83,7 @@ async def _fetch_json(url: str, timeout_seconds: float) -> Mapping[str, object]:
 
 def _service_definitions() -> tuple[ServiceDefinition, ...]:
     """从部署环境读取固定服务地址，禁止由 HTTP 请求覆盖。"""
-    return (
+    definitions = [
         ServiceDefinition(
             "muye-llm",
             "muye-llm",
@@ -91,6 +91,18 @@ def _service_definitions() -> tuple[ServiceDefinition, ...]:
             os.getenv("MUYE_LLM_URL", "http://127.0.0.1:9850"),
             default_profiles=("internal",),
         ),
+    ]
+    if os.getenv("MUYE_DATA_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        definitions.append(
+            ServiceDefinition(
+                "muye-data",
+                "muye-data",
+                "data",
+                os.getenv("MUYE_DATA_URL", "http://127.0.0.1:9840"),
+                default_profiles=("internal", "read-only"),
+            )
+        )
+    definitions.extend([
         ServiceDefinition(
             "agent-main",
             "agent-main",
@@ -114,11 +126,15 @@ def _service_definitions() -> tuple[ServiceDefinition, ...]:
             supports_capabilities=True,
             default_profiles=("internal",),
         ),
-    )
+    ])
+    return tuple(definitions)
 
 
 TOPOLOGY_EDGES = (
     TopologyEdge(source="agent-main", target="muye-llm", label="模型调用"),
+    TopologyEdge(source="agent-main", target="muye-data", label="按需召回"),
+    TopologyEdge(source="agent-travel", target="muye-data", label="按需召回"),
+    TopologyEdge(source="agent-order", target="muye-data", label="按需召回"),
     TopologyEdge(source="agent-main", target="agent-travel", label="internal"),
     TopologyEdge(source="agent-main", target="agent-order", label="internal"),
 )
@@ -199,10 +215,15 @@ def create_app(
         statuses = await asyncio.gather(
             *(_probe_service(definition, fetch_json) for definition in services)
         )
+        service_ids = {definition.service_id for definition in services}
         return DashboardResponse(
             generated_at=datetime.now(UTC),
             services=statuses,
-            edges=list(TOPOLOGY_EDGES),
+            edges=[
+                edge
+                for edge in TOPOLOGY_EDGES
+                if edge.source in service_ids and edge.target in service_ids
+            ],
         )
 
     @app.get("/services", response_model=DashboardResponse)

@@ -23,7 +23,8 @@ cd agents/agent-main
 ```
 
 独立启动前可执行 `cp .env.example .env`。模板列出模型网关、数据库、检索和子 Agent 的常用
-配置，并默认使用 SQLite、关闭外部记忆服务。包含 API Key、Token 或数据库连接串的 `.env`
+配置，并默认使用 SQLite、关闭记忆功能。`MEMORY_ENABLED=false` 会完全关闭记忆中间件，因而
+不会连接 Redis、MongoDB 或 evermemOS。包含 API Key、Token 或数据库连接串的 `.env`
 仅供本地运行，不得提交。
 常用服务地址为 `MUYE_LLM_BASE_URL`、`MUYE_AGENT_TRAVEL_URL` 和
 `MUYE_AGENT_ORDER_URL`；实际可用配置以 `config/` 与部署环境为准。

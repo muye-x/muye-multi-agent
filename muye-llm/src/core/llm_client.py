@@ -11,16 +11,25 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import random
 import time
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, replace
-from typing import Any, AsyncGenerator, AsyncIterator
+from typing import Any
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from config.settings import settings
-from src.core.model_registry import ModelRegistry, ModelSelection, ModelSelectionError
 from src.core.langsmith_tracing import LangSmithTracer
+from src.core.model_registry import (
+    EmbeddingModelRegistry,
+    EmbeddingModelSelection,
+    ModelRegistry,
+    ModelSelection,
+    ModelSelectionError,
+)
+from src.core.rerank import RerankClient, RerankResult
 from src.utils.exceptions import InvalidRequestException
 from src.utils.exceptions import LLMCallException
 
@@ -49,6 +58,15 @@ class LLMStreamEvent:
     content: str = ""
     tool_calls: list[dict[str, Any]] | None = None
     result: LLMCallResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingResult:
+    """Embedding 调用结果及对外可见的模型 alias、实际维度。"""
+
+    embeddings: tuple[tuple[float, ...], ...]
+    model_alias: str
+    dimensions: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +210,8 @@ class MultiLLMClient:
         embedding_client: Any | None = None,
         model_registry: ModelRegistry | None = None,
         tracer: LangSmithTracer | None = None,
+        embedding_model_registry: EmbeddingModelRegistry | None = None,
+        rerank_client: RerankClient | Any | None = None,
     ) -> None:
         self._api_config = api_config or _build_api_config()
         self._client = client or AsyncOpenAI(
@@ -211,6 +231,11 @@ class MultiLLMClient:
             default_model=settings.llm_default_model,
             default_thinking=settings.llm_default_thinking,
         )
+        self._embedding_model_registry = embedding_model_registry or EmbeddingModelRegistry(
+            settings.embed_models,
+            default_model=settings.embed_default_model,
+        )
+        self._rerank_client = rerank_client or RerankClient()
         self._tracer = tracer or LangSmithTracer(
             enabled=settings.langsmith_enabled,
             api_key=settings.langsmith_api_key,
@@ -245,6 +270,16 @@ class MultiLLMClient:
         """返回服务模型白名单，供只读模型列表接口使用。"""
         return self._model_registry
 
+    @property
+    def embedding_model_registry(self) -> EmbeddingModelRegistry:
+        """返回 Embedding alias 白名单，供模型列表接口只读展示。"""
+        return self._embedding_model_registry
+
+    @property
+    def rerank_client(self) -> RerankClient:
+        """返回 Rerank 客户端，供 API 调用和能力列表使用。"""
+        return self._rerank_client
+
     def resolve_model(
         self,
         model: str | None = None,
@@ -253,6 +288,13 @@ class MultiLLMClient:
         """解析请求级模型配置，并将能力错误转换为 HTTP 400 领域异常。"""
         try:
             return self._model_registry.resolve(model, enable_thinking)
+        except ModelSelectionError as exc:
+            raise InvalidRequestException(str(exc)) from exc
+
+    def resolve_embedding_model(self, model: str | None = None) -> EmbeddingModelSelection:
+        """解析 Embedding alias，并将选择错误转换为 HTTP 400 领域异常。"""
+        try:
+            return self._embedding_model_registry.resolve(model)
         except ModelSelectionError as exc:
             raise InvalidRequestException(str(exc)) from exc
 
@@ -276,8 +318,8 @@ class MultiLLMClient:
             return
 
     async def aclose(self) -> None:
-        """释放 Chat、Embedding 客户端持有的 HTTP 连接池，允许幂等调用。"""
-        resources = [self._client, self._embedding_client]
+        """释放 Chat、Embedding、Rerank 客户端连接池，允许幂等调用。"""
+        resources = [self._client, self._embedding_client, self._rerank_client]
         await asyncio.gather(*(self._close_resource(resource) for resource in resources), return_exceptions=True)
 
     def _build_chat_kwargs(
@@ -655,17 +697,118 @@ class MultiLLMClient:
             elif event.tool_calls:
                 yield json.dumps({"tool_calls": event.tool_calls}, ensure_ascii=False)
 
-    async def embed(self, texts: list[str], trace_id: str = "") -> list[list[float]]:
-        """使用复用的 Embedding 客户端调用向量服务，失败时返回空列表。"""
+    @staticmethod
+    def _parse_embeddings(
+        response: Any,
+        *,
+        input_count: int,
+        selection: EmbeddingModelSelection,
+    ) -> EmbeddingResult:
+        """验证上游向量数量、维度和有限数值，返回不可变结果。"""
+        raw_items = getattr(response, "data", None)
+        if not isinstance(raw_items, list) or len(raw_items) != input_count:
+            raise ValueError("Embedding 响应数量与输入不一致")
+
+        embeddings: list[tuple[float, ...]] = []
+        dimensions: int | None = None
+        for item in raw_items:
+            raw_embedding = getattr(item, "embedding", None)
+            if not isinstance(raw_embedding, list) or not raw_embedding:
+                raise ValueError("Embedding 响应向量为空")
+            vector: list[float] = []
+            for value in raw_embedding:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError("Embedding 响应包含非法数值")
+                normalized_value = float(value)
+                if not math.isfinite(normalized_value):
+                    raise ValueError("Embedding 响应包含非有限数值")
+                vector.append(normalized_value)
+            if dimensions is None:
+                dimensions = len(vector)
+            elif len(vector) != dimensions:
+                raise ValueError("Embedding 响应向量维度不一致")
+            embeddings.append(tuple(vector))
+
+        if dimensions is None:
+            raise ValueError("Embedding 响应未返回任何向量")
+        if selection.dimensions is not None and dimensions != selection.dimensions:
+            raise ValueError("Embedding 响应维度与模型配置不一致")
+        return EmbeddingResult(
+            embeddings=tuple(embeddings),
+            model_alias=selection.id,
+            dimensions=dimensions,
+        )
+
+    async def embed_result(
+        self,
+        texts: list[str],
+        trace_id: str = "",
+        model: str | None = None,
+    ) -> EmbeddingResult | None:
+        """使用 alias 调用 Embedding；失败时返回 ``None`` 以保持旧接口语义。"""
+        selection = self.resolve_embedding_model(model)
         try:
             response = await asyncio.wait_for(
-                self._embedding_client.embeddings.create(model=settings.embed_model, input=texts),
+                self._embedding_client.embeddings.create(
+                    model=selection.provider_model,
+                    input=texts,
+                ),
                 timeout=settings.llm_timeout,
             )
-            return [item.embedding for item in response.data]
+            result = self._parse_embeddings(
+                response,
+                input_count=len(texts),
+                selection=selection,
+            )
+            logger.info(
+                "[LLM.embed] success trace_id=%s model=%s count=%s dimensions=%s",
+                trace_id,
+                selection.id,
+                len(result.embeddings),
+                result.dimensions,
+            )
+            return result
+        except asyncio.CancelledError:
+            logger.info("[LLM.embed] cancelled trace_id=%s model=%s", trace_id, selection.id)
+            raise
         except Exception as exc:
-            logger.error("[LLM.embed] 失败 trace_id=%s error=%s", trace_id, type(exc).__name__)
+            logger.error(
+                "[LLM.embed] failure trace_id=%s model=%s error=%s",
+                trace_id,
+                selection.id,
+                type(exc).__name__,
+            )
+            return None
+
+    async def embed(
+        self,
+        texts: list[str],
+        trace_id: str = "",
+        model: str | None = None,
+    ) -> list[list[float]]:
+        """历史兼容接口；失败返回空列表，成功仅返回可变向量列表。"""
+        result = await self.embed_result(texts, trace_id=trace_id, model=model)
+        if result is None:
             return []
+        return [list(embedding) for embedding in result.embeddings]
+
+    async def rerank(
+        self,
+        *,
+        query: str,
+        documents: list[str],
+        top_n: int,
+        model: str | None = None,
+        trace_id: str = "",
+    ) -> RerankResult:
+        """通过独立 Rerank 客户端执行排序，不改变候选文档正文。"""
+        return await self._rerank_client.rerank(
+            query=query,
+            documents=documents,
+            top_n=top_n,
+            model=model,
+            trace_id=trace_id,
+        )
 
 
 def get_llm_client() -> MultiLLMClient:

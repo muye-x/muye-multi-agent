@@ -2,7 +2,7 @@
 """
 Muye Multi-Agent Scaffold 服务启动器。
 
-按依赖顺序启动 muye-llm、agent-main、agent-travel、agent-order 与本地 Gateway 控制台。
+按依赖顺序启动 muye-llm、可选 muye-data、各 Agent 与本地 Gateway 控制台。
 
 外部依赖（需提前启动）：
   - PostgreSQL 16  — checkpointer 持久化存储
@@ -54,6 +54,7 @@ def _c(color: str, text: str) -> str:
 PROJECT_ROOT = Path(__file__).resolve().parent
 ROOT_ENV_FILE = PROJECT_ROOT / ".env"
 LLM_ENV_FILE = PROJECT_ROOT / "muye-llm" / ".env"
+DATA_ENV_FILE = PROJECT_ROOT / "muye-data" / ".env"
 AGENT_MAIN_ENV_FILE = PROJECT_ROOT / "agents" / "agent-main" / ".env"
 ENV_EXAMPLE_FILE = PROJECT_ROOT / ".env.example"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
@@ -71,6 +72,18 @@ SERVICES: list[dict] = [
         "bind_host": "127.0.0.1",
         "log_label": "LLM",
         "log_color": "\033[96m",
+    },
+    {
+        "id": 6,
+        "name": "muye-data · 只读召回服务",
+        "cwd": "muye-data",
+        "cmd": [PYTHON_BIN, "main.py"],
+        "port": 9840,
+        "health_url": "http://127.0.0.1:9840/health",
+        "bind_host": "127.0.0.1",
+        "log_label": "DATA",
+        "log_color": "\033[36m",
+        "enabled_env": "MUYE_DATA_ENABLED",
     },
     {
         "id": 2,
@@ -131,10 +144,16 @@ def load_runtime_environment(env_file: Path = ROOT_ENV_FILE) -> None:
 def read_llm_environment(
     llm_env_file: Path = LLM_ENV_FILE,
     agent_main_env_file: Path = AGENT_MAIN_ENV_FILE,
+    *,
+    data_env_file: Path = DATA_ENV_FILE,
 ) -> dict[str, str]:
-    """合并 LLM、主 Agent 本地配置与进程环境，供启动前检查使用。"""
+    """合并服务本地配置与进程环境，供启动前检查使用。
+
+    前两个位置参数保留为 LLM 和主 Agent 配置文件，兼容既有调用方；
+    muye-data 配置只能通过关键字指定。
+    """
     values: dict[str, str] = {}
-    for env_file in (llm_env_file, agent_main_env_file):
+    for env_file in (llm_env_file, data_env_file, agent_main_env_file):
         if not env_file.is_file():
             continue
         values.update(
@@ -155,6 +174,25 @@ def _is_http_url(value: str) -> bool:
     except ValueError:
         return False
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _env_flag_enabled(values: Mapping[str, str], name: str, *, default: bool = False) -> bool:
+    """判断可选服务开关；非法值由配置校验函数报告。"""
+    raw_value = values.get(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def enabled_services(values: Mapping[str, str] | None = None) -> list[dict]:
+    """返回当前部署明确启用的服务，未声明开关的服务始终启用。"""
+    source = values if values is not None else os.environ
+    return [
+        service
+        for service in SERVICES
+        if "enabled_env" not in service
+        or _env_flag_enabled(source, service["enabled_env"])
+    ]
 
 
 def validate_llm_environment(values: Mapping[str, str]) -> list[str]:
@@ -217,6 +255,89 @@ def validate_llm_environment(values: Mapping[str, str]) -> list[str]:
     elif model_ids is not None and agent_model not in model_ids:
         errors.append("MUYE_LLM_MODEL 必须存在于 MUYE_LLM_MODELS_JSON")
 
+    raw_embed_models = values.get("MUYE_LLM_EMBED_MODELS_JSON")
+    if raw_embed_models is not None:
+        try:
+            embed_models = json.loads(raw_embed_models)
+        except json.JSONDecodeError:
+            errors.append("MUYE_LLM_EMBED_MODELS_JSON 必须是合法的 JSON array")
+        else:
+            embed_ids = [
+                item.get("id", "").strip()
+                for item in embed_models
+                if isinstance(item, dict)
+                and isinstance(item.get("id"), str)
+                and isinstance(item.get("dimensions"), int)
+                and item["dimensions"] > 0
+            ] if isinstance(embed_models, list) else []
+            if not embed_ids or len(embed_ids) != len(embed_models):
+                errors.append("MUYE_LLM_EMBED_MODELS_JSON 中每个模型都必须包含非空 id 和正整数 dimensions")
+            elif len(embed_ids) != len(set(embed_ids)):
+                errors.append("MUYE_LLM_EMBED_MODELS_JSON 中的模型 id 不能重复")
+            else:
+                default_embed = values.get("MUYE_LLM_EMBED_DEFAULT_MODEL", "").strip()
+                if default_embed not in embed_ids:
+                    errors.append("MUYE_LLM_EMBED_DEFAULT_MODEL 必须存在于 MUYE_LLM_EMBED_MODELS_JSON")
+    elif not values.get("MUYE_LLM_EMBED_MODEL", "text-embedding-v3").strip():
+        errors.append("MUYE_LLM_EMBED_MODEL 不能为空")
+
+    rerank_flag = values.get("MUYE_LLM_RERANK_ENABLED", "false").strip().lower()
+    if rerank_flag not in {"0", "1", "false", "true", "no", "yes", "off", "on"}:
+        errors.append("MUYE_LLM_RERANK_ENABLED 必须是布尔值")
+    elif rerank_flag in {"1", "true", "yes", "on"}:
+        rerank_url = values.get("MUYE_LLM_RERANK_API_URL", "").strip()
+        if not _is_http_url(rerank_url):
+            errors.append("MUYE_LLM_RERANK_API_URL 必须是有效的完整 HTTP(S) URL")
+        if not values.get("MUYE_LLM_RERANK_API_KEY", "").strip():
+            errors.append("MUYE_LLM_RERANK_API_KEY 未配置（Rerank 服务 API Key）")
+        try:
+            rerank_models = json.loads(values.get("MUYE_LLM_RERANK_MODELS_JSON", "[]"))
+        except json.JSONDecodeError:
+            errors.append("MUYE_LLM_RERANK_MODELS_JSON 必须是合法的 JSON array")
+        else:
+            rerank_ids = [
+                item.get("id", "").strip()
+                for item in rerank_models
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            ] if isinstance(rerank_models, list) else []
+            if not rerank_ids or len(rerank_ids) != len(rerank_models):
+                errors.append("MUYE_LLM_RERANK_MODELS_JSON 中每个模型都必须包含非空 id")
+            elif len(rerank_ids) != len(set(rerank_ids)):
+                errors.append("MUYE_LLM_RERANK_MODELS_JSON 中的模型 id 不能重复")
+            else:
+                default_rerank = values.get("MUYE_LLM_RERANK_DEFAULT_MODEL", "").strip()
+                if default_rerank not in rerank_ids:
+                    errors.append("MUYE_LLM_RERANK_DEFAULT_MODEL 必须存在于 MUYE_LLM_RERANK_MODELS_JSON")
+
+    return errors
+
+
+def validate_data_environment(
+    values: Mapping[str, str],
+    project_root: Path = PROJECT_ROOT,
+) -> list[str]:
+    """仅在启用 muye-data 时校验本地入口配置，不探测远端数据库。"""
+    raw_enabled = values.get("MUYE_DATA_ENABLED", "false").strip().lower()
+    valid_flags = {"0", "1", "false", "true", "no", "yes", "off", "on"}
+    if raw_enabled not in valid_flags:
+        return ["MUYE_DATA_ENABLED 必须是布尔值"]
+    if raw_enabled not in {"1", "true", "yes", "on"}:
+        return []
+
+    errors: list[str] = []
+    raw_path = values.get("MUYE_DATA_CONFIG_PATH", "config.yaml").strip()
+    if not raw_path:
+        errors.append("MUYE_DATA_CONFIG_PATH 不能为空")
+    else:
+        config_path = Path(raw_path)
+        if not config_path.is_absolute():
+            config_path = project_root / "muye-data" / config_path
+        if not config_path.is_file():
+            errors.append(f"MUYE_DATA_CONFIG_PATH 指向的文件不存在：{config_path}")
+
+    llm_base_url = values.get("MUYE_DATA_LLM_BASE_URL", "http://127.0.0.1:9850").strip()
+    if not _is_http_url(llm_base_url):
+        errors.append("MUYE_DATA_LLM_BASE_URL 必须是有效的 HTTP(S) URL")
     return errors
 
 
@@ -322,10 +443,12 @@ def start_service(svc: dict, health_timeout: int) -> Optional[subprocess.Popen]:
     # 强制 Python 非缓冲输出，确保日志实时出现在控制台
     env["PYTHONUNBUFFERED"] = "1"
 
-    # 服务配置统一读取 MUYE_AGENT_HOST 或 MUYE_LLM_HOST。
+    # 服务配置统一读取对应服务的 host 环境变量。
     bind_host: str = svc.get("bind_host", "127.0.0.1")
     if svc["id"] == 1:
         env["MUYE_LLM_HOST"] = bind_host
+    elif svc["id"] == 6:
+        env["MUYE_DATA_HOST"] = bind_host
     elif svc["id"] in {2, 3, 4}:
         env["MUYE_AGENT_HOST"] = bind_host
 
@@ -364,12 +487,19 @@ def start_service(svc: dict, health_timeout: int) -> Optional[subprocess.Popen]:
 
 
 # ─── dry-run 模式 ────────────────────────────────────────────────────────────
-def dry_run(configuration_errors: Sequence[str] = ()) -> None:
+def dry_run(
+    configuration_errors: Sequence[str] = (),
+    active_services: Sequence[Mapping[str, object]] | None = None,
+) -> None:
     """检查服务入口与运行配置，但不启动子进程。"""
     print(f"\n{_c(BOLD + YELLOW, '⚡ DRY-RUN 模式')}\n")
     python_bin = Path(PYTHON_BIN)
     print(f"  Python (.venv): {_c(BLUE, str(python_bin))} {'✔' if python_bin.exists() else '✘'}\n")
     all_ok = python_bin.exists()
+    active_ids = {
+        service.get("id")
+        for service in (active_services if active_services is not None else enabled_services())
+    }
     for svc in SERVICES:
         cwd = PROJECT_ROOT / svc["cwd"]
         cmd_file = cwd / svc["cmd"][1]
@@ -378,6 +508,8 @@ def dry_run(configuration_errors: Sequence[str] = ()) -> None:
         ok_py = Path(svc["cmd"][0]).exists()
         status = _c(GREEN, "✔") if (ok_cwd and ok_cmd and ok_py) else _c(RED, "✘")
         print(f"  {status} {svc['name']}")
+        if svc.get("enabled_env") and svc.get("id") not in active_ids:
+            print(_c(YELLOW, f"      已由 {svc['enabled_env']}=false 跳过运行"))
         if not ok_cwd:
             print(_c(RED, f"      目录不存在: {cwd}"))
             all_ok = False
@@ -409,14 +541,15 @@ def _graceful_shutdown(sig, frame):
 
 
 # ─── 启动完成提示 ───────────────────────────────────────────────────────────
-def _print_ready_guide() -> None:
+def _print_ready_guide(services: Sequence[Mapping[str, object]]) -> None:
+    data_port = "  9840 — muye-data（只读召回）\n" if any(service.get("id") == 6 for service in services) else ""
     guide = f"""
 {_c(BOLD + GREEN, "═" * 68)}
 {_c(BOLD + GREEN, "  ✅ Muye 服务已就绪！")}
 
 {_c(BOLD, "服务端口：")}
   9850 — muye-llm
-  9860 — Main Agent
+{data_port}  9860 — Main Agent
   8011 — Travel Agent
   8012 — Order Agent
   9870 — Gateway 运维控制台（本地：http://127.0.0.1:9870/console/）
@@ -439,10 +572,15 @@ def main() -> None:
     args = parser.parse_args()
 
     load_runtime_environment()
-    configuration_errors = validate_llm_environment(read_llm_environment())
+    runtime_values = read_llm_environment()
+    configuration_errors = [
+        *validate_llm_environment(runtime_values),
+        *validate_data_environment(runtime_values),
+    ]
+    services = enabled_services(runtime_values)
 
     if args.dry_run:
-        dry_run(configuration_errors)
+        dry_run(configuration_errors, services)
         return
 
     if configuration_errors:
@@ -457,17 +595,17 @@ def main() -> None:
     print(f"{_c(BOLD + GREEN, '═' * 68)}\n")
 
     procs = []
-    for svc in SERVICES:
+    for svc in services:
         res = start_service(svc, args.timeout)
         if res is None:
             print(_c(RED, "\n✘ 启动失败"))
             _graceful_shutdown(None, None)
         procs.append(res)
 
-    _print_ready_guide()
+    _print_ready_guide(services)
 
     while True:
-        for svc, p in zip(SERVICES, procs):
+        for svc, p in zip(services, procs):
             if isinstance(p, _AlreadyRunningProc): continue
             if p.poll() is not None:
                 print(_c(RED, f"\n⚠ {svc['name']} 已退出"))

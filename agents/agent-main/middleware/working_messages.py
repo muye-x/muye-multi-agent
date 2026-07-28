@@ -3,7 +3,8 @@ Working Messages 中间件
 在 LLM 调用时使用 working_messages 替代 messages
 """
 import logging
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from .base import AgentMiddleware
 

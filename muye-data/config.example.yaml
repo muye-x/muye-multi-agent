@@ -1,0 +1,57 @@
+version: 1
+
+connections:
+  milvus_default:
+    type: milvus
+    uri: http://127.0.0.1:19530
+    token_env: MUYE_DATA_MILVUS_TOKEN
+    database: default
+
+  opensearch_default:
+    type: opensearch
+    hosts:
+      - http://127.0.0.1:9200
+    username_env: MUYE_DATA_OPENSEARCH_USERNAME
+    password_env: MUYE_DATA_OPENSEARCH_PASSWORD
+    verify_certs: true
+
+resources:
+  product_knowledge:
+    connection: milvus_default
+    target: product_documents
+    fields:
+      id: document_id
+      content: content
+      vector: dense_embedding
+      keyword: sparse_embedding
+      exposed_fields:
+        title: title
+        source: source
+      filterable_fields:
+        category: category
+        enabled: enabled
+    embedding:
+      model: your-embedding-alias
+      dimensions: 1024
+    pipelines:
+      dense:
+        type: dense
+        candidate_k: 50
+        metric_type: COSINE
+      keyword:
+        type: keyword
+        candidate_k: 50
+      hybrid:
+        type: hybrid
+        dense_candidate_k: 50
+        keyword_candidate_k: 50
+        dense_weight: 1.0
+        keyword_weight: 1.0
+        rank_constant: 60
+        rerank:
+          model: your-rerank-alias
+          required: false
+    default_pipeline: hybrid
+    default_return_fields:
+      - title
+      - source

@@ -1,6 +1,10 @@
 # Muye 模型中心
 
-`muye-llm` 是仅供可信内网服务调用的 OpenAI-compatible 模型网关。它提供单个上游、模型别名、thinking 能力校验和可选 LangSmith tracing；不包含计费、用量上报或 `usage_context` 兼容层。Tracing 默认关闭，开启后只上报 `trace_id`、模型、thinking、延迟、工具数量和状态，不上报任务正文或业务 metadata；LangSmith 故障不会阻断模型响应。
+`muye-llm` 是仅供可信内网服务调用的模型网关。它为 Chat、Embedding 和 Rerank 提供独立的
+模型别名注册表，并负责模型能力校验、上游超时与有限重试。Rerank 首版适配 DashScope，默认
+关闭。服务不包含计费、用量上报或 `usage_context` 兼容层。Tracing 默认关闭，开启后只上报
+`trace_id`、模型、thinking、延迟、工具数量和状态，不上报任务正文或业务 metadata；LangSmith
+故障不会阻断模型响应。
 
 ## 接口
 
@@ -14,6 +18,7 @@
 | `POST` | `/api/v2/chat` | 获取一次性完整对话结果。 |
 | `POST` | `/api/v2/chat/stream` | 以 SSE 持续返回对话增量和工具调用。 |
 | `POST` | `/api/v2/embed` | 为一组文本生成 Embedding 向量。 |
+| `POST` | `/api/v2/rerank` | 对候选文档排序，只返回原始索引和分数。 |
 
 除健康检查外，JSON 接口的成功响应均使用以下信封。`timestamp` 是 UTC ISO 8601 时间；
 `data` 的结构由具体接口定义。
@@ -30,8 +35,8 @@
 
 请求模型使用严格 schema，未知字段会被拒绝。已移除的 `usage_context` 不能再发送；
 Pydantic 参数校验失败返回 HTTP `422`，业务参数错误（如空 `messages`、未知模型或不支持
-thinking）返回 HTTP `400`。非流式对话和向量接口的上游调用失败会在响应体中标记
-`success: false`、`code: 502`；未处理的服务异常返回 HTTP `500`。
+thinking）返回 HTTP `400`。Rerank 未启用返回 HTTP `503`；Rerank 上游失败返回 HTTP `502`。
+非流式对话和向量接口沿用原有信封内 `code: 502` 失败语义；未处理的服务异常返回 HTTP `500`。
 
 ### `GET /health`
 
@@ -66,6 +71,10 @@ curl http://127.0.0.1:9850/health
 | `models[].name` | 用于界面展示的名称。 |
 | `models[].supports_thinking` | 是否允许启用 `enable_thinking`。 |
 | `models[].is_default` | 是否为默认模型。 |
+| `default_embedding_model` | Embedding 请求未传 `model` 时使用的 alias。 |
+| `embedding_models` | 可调用的 Embedding alias、展示名、预期维度及默认标记。 |
+| `default_rerank_model` | Rerank 默认 alias；功能关闭时为 `null`。 |
+| `rerank_models` | 功能开启时可调用的 Rerank alias；关闭时为空数组。 |
 
 该接口不会返回上游模型名、上游 URL 或密钥等内部配置。
 
@@ -152,14 +161,14 @@ curl -N -X POST http://127.0.0.1:9850/api/v2/chat/stream \
 
 ### `POST /api/v2/embed`
 
-为一批文本生成向量，适用于检索、相似度计算和索引构建。服务按输入顺序返回向量，调用方应将
-第 `n` 个向量与第 `n` 个输入文本对应。Embedding 使用独立的服务端配置模型，不接受请求级
-模型覆盖。
+为一批文本生成向量，适用于检索和相似度计算。服务按输入顺序返回向量，调用方应将第 `n` 个
+向量与第 `n` 个输入文本对应。可选 `model` 只能使用 `/models` 返回的 alias，不能传上游模型名。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `texts` | string[] | 是 | 待向量化文本，至少包含一项。 |
 | `trace_id` | string | 否 | 调用链关联标识，仅用于日志。 |
+| `model` | string | 否 | Embedding alias；缺省时使用 `default_embedding_model`。 |
 
 ```bash
 curl -X POST http://127.0.0.1:9850/api/v2/embed \
@@ -167,8 +176,42 @@ curl -X POST http://127.0.0.1:9850/api/v2/embed \
   -d '{"trace_id":"knowledge-001","texts":["兵马俑","回民街美食"]}'
 ```
 
-成功响应的 `data.embeddings` 是 `number[][]`，`data.count` 是实际返回向量数量。上游未返回
-任何向量时，接口返回 `success: false`、`code: 502`。
+成功响应的 `data.embeddings` 是 `number[][]`，`data.count` 是实际返回向量数量，`data.model`
+是实际 alias，`data.dimensions` 是本次向量的实际维度。服务会拒绝向量数量错误、维度不一致、
+非有限数值以及与注册表预期维度不一致的响应。上游失败仍沿用 `success: false`、`code: 502`。
+
+新部署使用 `MUYE_LLM_EMBED_MODELS_JSON` 和 `MUYE_LLM_EMBED_DEFAULT_MODEL` 配置注册表。为保持
+兼容，如果没有配置注册表，服务会把旧 `MUYE_LLM_EMBED_MODEL` 的值同时作为公开 alias 和
+provider 模型名；此兼容模式的预期维度未知，但响应仍返回实际维度。
+
+### `POST /api/v2/rerank`
+
+对调用方提供的候选文档做相关性排序。服务不保存候选内容，响应也不回显文档；`index` 始终指向
+请求中原始 `documents` 的下标。`model` 只能使用 `/models` 返回的 Rerank alias。
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `query` | string | 是 | 非空查询文本，长度受服务端预算限制。 |
+| `documents` | string[] | 是 | 非空候选文本，数量、单项长度和总字符数均有限制。 |
+| `top_n` | integer | 是 | 返回数量，范围为 `1..len(documents)`。 |
+| `model` | string | 否 | Rerank alias；缺省时使用 `default_rerank_model`。 |
+| `trace_id` | string | 否 | 调用链关联标识，仅用于脱敏日志。 |
+
+```bash
+curl -X POST http://127.0.0.1:9850/api/v2/rerank \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "trace_id":"knowledge-001",
+    "query":"西安有哪些历史景点？",
+    "documents":["兵马俑位于临潼区。","回民街以美食闻名。"],
+    "top_n":1
+  }'
+```
+
+成功响应的 `data.results` 是按分数降序排列的 `[{"index": 0, "score": 0.95}]`，同时返回
+实际 `model` alias 和 `count`。服务会拒绝重复、越界 index、非有限分数和超过 `top_n` 的上游
+结果。网络错误、超时、HTTP `408`、`429` 和 `5xx` 会有限重试；认证错误、其他 `4xx` 及协议
+错误不重试。日志只记录 trace、alias、文档数、结果数、耗时、尝试次数和错误类别。
 
 ## 运行
 
@@ -177,9 +220,10 @@ cp .env.example .env
 ../.venv/bin/python main.py
 ```
 
-默认监听 `127.0.0.1:9850`。`.env.example` 列出 Chat、Embedding、模型注册表和可选
-LangSmith 配置；`MUYE_LLM_API_KEY` 与 `MUYE_LLM_EMBED_API_KEY` 必须填入实际运行值。
-模板可以提交，包含真实密钥的 `.env` 不得写入仓库。
+默认监听 `127.0.0.1:9850`。`.env.example` 列出 Chat、Embedding、Rerank 模型注册表和可选
+LangSmith 配置；`MUYE_LLM_API_KEY` 与 `MUYE_LLM_EMBED_API_KEY` 必须填入实际运行值。只有
+`MUYE_LLM_RERANK_ENABLED=true` 时才要求 `MUYE_LLM_RERANK_API_KEY`。模板可以提交，包含真实
+密钥的 `.env` 不得写入仓库。
 
 ## 验证
 

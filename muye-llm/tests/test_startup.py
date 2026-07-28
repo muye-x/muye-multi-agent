@@ -40,3 +40,17 @@ def test_main_does_not_call_uvicorn_when_configuration_is_missing(monkeypatch) -
     monkeypatch.setattr(service_main.uvicorn, "run", fail_if_started)
 
     service_main.main()
+
+
+def test_rerank_key_is_only_required_when_feature_is_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(service_main.settings, "llm_api_key", "chat-key")
+    monkeypatch.setattr(service_main.settings, "embed_api_key", "embed-key")
+    monkeypatch.setattr(service_main.settings, "rerank_api_key", "")
+    monkeypatch.setattr(service_main.settings, "rerank_api_url", "https://example.test/rerank")
+
+    monkeypatch.setattr(service_main.settings, "rerank_enabled", False)
+    assert service_main.validate_startup_configuration() == []
+
+    monkeypatch.setattr(service_main.settings, "rerank_enabled", True)
+    errors = service_main.validate_startup_configuration()
+    assert errors == ["MUYE_LLM_RERANK_API_KEY 未配置（Rerank 服务 API Key）"]

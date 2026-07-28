@@ -1,8 +1,10 @@
 """多厂商 LLM 统一代理服务配置。"""
 
 import json
+import math
 import os
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -49,6 +51,8 @@ def _env_float(name: str, default: str, *, minimum: float, inclusive: bool = Fal
         value = float(os.getenv(name, default))
     except ValueError as exc:
         raise ValueError(f"{name} 必须是数字") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{name} 必须是有限数字")
     valid = value >= minimum if inclusive else value > minimum
     if not valid:
         operator = "大于等于" if inclusive else "大于"
@@ -80,6 +84,23 @@ def _env_json_array(name: str, default: str) -> list[Any]:
     return value
 
 
+def _env_http_url(name: str, default: str, *, allow_empty: bool = False) -> str:
+    """读取不含凭据的完整 HTTP(S) URL。"""
+    value = os.getenv(name, default).strip()
+    if not value and allow_empty:
+        return value
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+    except ValueError as exc:
+        raise ValueError(f"{name} 必须是有效的完整 HTTP(S) URL") from exc
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        raise ValueError(f"{name} 必须是有效的完整 HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{name} 不能包含 URL 凭据")
+    return value
+
+
 class LLMModelSettings(BaseModel):
     """一个允许调用的 LLM 定义，来源于 ``LLM_MODELS_JSON``。"""
 
@@ -100,12 +121,90 @@ class LLMModelSettings(BaseModel):
         return normalized
 
 
+class EmbeddingModelSettings(BaseModel):
+    """一个允许调用的 Embedding 定义。
+
+    ``id`` 是对调用方公开的稳定别名，``provider_model`` 只在服务内部使用。
+    ``dimensions`` 为空时表示兼容旧 ``MUYE_LLM_EMBED_MODEL`` 配置，实际维度在
+    每次响应中根据上游向量确定。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    provider_model: str = Field(min_length=1)
+    dimensions: int | None = Field(default=None, ge=1)
+
+    @field_validator("id", "name", "provider_model")
+    @classmethod
+    def strip_non_empty_text(cls, value: str) -> str:
+        """规范化别名、展示名与上游模型名。"""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Embedding 模型文本字段不能为空")
+        return normalized
+
+
+class RerankModelSettings(BaseModel):
+    """一个允许调用的 Rerank 定义；供应商字段不会通过公共 API 暴露。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    provider_model: str = Field(min_length=1)
+    provider: Literal["dashscope"] = "dashscope"
+
+    @field_validator("id", "name", "provider_model")
+    @classmethod
+    def strip_non_empty_text(cls, value: str) -> str:
+        """规范化模型定义中的非空文本字段。"""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Rerank 模型文本字段不能为空")
+        return normalized
+
+
 def _env_llm_models() -> list[LLMModelSettings]:
     """解析并验证环境变量中的模型注册表。"""
     raw_models = _env_json_array("MUYE_LLM_MODELS_JSON", DEFAULT_LLM_MODELS_JSON)
     if not raw_models:
         raise ValueError("LLM_MODELS_JSON 至少需要配置一个模型")
     return [LLMModelSettings.model_validate(item) for item in raw_models]
+
+
+def _env_embedding_models() -> list[EmbeddingModelSettings]:
+    """解析 Embedding 注册表，并兼容旧的单模型环境变量。"""
+    raw_registry = os.getenv("MUYE_LLM_EMBED_MODELS_JSON")
+    if raw_registry is None:
+        legacy_model = os.getenv("MUYE_LLM_EMBED_MODEL", "text-embedding-v3").strip()
+        if not legacy_model:
+            raise ValueError("MUYE_LLM_EMBED_MODEL 不能为空")
+        return [
+            EmbeddingModelSettings(
+                id=legacy_model,
+                name=legacy_model,
+                provider_model=legacy_model,
+            )
+        ]
+
+    raw_models = _env_json_array("MUYE_LLM_EMBED_MODELS_JSON", "[]")
+    if not raw_models:
+        raise ValueError("MUYE_LLM_EMBED_MODELS_JSON 至少需要配置一个模型")
+    return [EmbeddingModelSettings.model_validate(item) for item in raw_models]
+
+
+def _env_rerank_models() -> list[RerankModelSettings]:
+    """解析 Rerank 注册表；默认模型仅在 feature flag 开启后可调用。"""
+    default = (
+        '[{"id":"gte-rerank-v2","name":"GTE Rerank V2",'
+        '"provider_model":"gte-rerank-v2","provider":"dashscope"}]'
+    )
+    return [
+        RerankModelSettings.model_validate(item)
+        for item in _env_json_array("MUYE_LLM_RERANK_MODELS_JSON", default)
+    ]
 
 
 class Settings(BaseModel):
@@ -128,7 +227,31 @@ class Settings(BaseModel):
     # Embedding 服务配置
     embed_api_base_url: str = os.getenv("MUYE_LLM_EMBED_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     embed_api_key: str = os.getenv("MUYE_LLM_EMBED_API_KEY", "")
+    # 保留该字段供历史调用方读取；新请求通过 embed_models 中的 alias 选择模型。
     embed_model: str = os.getenv("MUYE_LLM_EMBED_MODEL", "text-embedding-v3")
+    embed_models: list[EmbeddingModelSettings] = _env_embedding_models()
+    embed_default_model: str = os.getenv("MUYE_LLM_EMBED_DEFAULT_MODEL", "").strip()
+
+    # Rerank 服务配置。API URL 是 DashScope 完整服务路径，不是 OpenAI base URL。
+    rerank_enabled: bool = _env_bool("MUYE_LLM_RERANK_ENABLED", "false")
+    rerank_api_url: str = _env_http_url(
+        "MUYE_LLM_RERANK_API_URL",
+        "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+        allow_empty=True,
+    )
+    rerank_api_key: str = os.getenv("MUYE_LLM_RERANK_API_KEY", "")
+    rerank_models: list[RerankModelSettings] = _env_rerank_models()
+    rerank_default_model: str = os.getenv("MUYE_LLM_RERANK_DEFAULT_MODEL", "").strip()
+    rerank_timeout: float = _env_float("MUYE_LLM_RERANK_TIMEOUT", "10.0", minimum=0.0)
+    rerank_max_retries: int = _env_int("MUYE_LLM_RERANK_MAX_RETRIES", "2", minimum=0)
+    rerank_max_documents: int = _env_int("MUYE_LLM_RERANK_MAX_DOCUMENTS", "100", minimum=1)
+    rerank_max_query_chars: int = _env_int("MUYE_LLM_RERANK_MAX_QUERY_CHARS", "8000", minimum=1)
+    rerank_max_document_chars: int = _env_int(
+        "MUYE_LLM_RERANK_MAX_DOCUMENT_CHARS", "16000", minimum=1
+    )
+    rerank_max_total_chars: int = _env_int(
+        "MUYE_LLM_RERANK_MAX_TOTAL_CHARS", "200000", minimum=1
+    )
 
     # 调用参数
     llm_default_temperature: float = _env_float(
@@ -148,7 +271,7 @@ class Settings(BaseModel):
     langsmith_endpoint: str = os.getenv("LANGSMITH_ENDPOINT", "")
 
     def model_post_init(self, __context: Any) -> None:
-        """校验模型注册表和扩展请求体。"""
+        """校验各模型注册表、默认别名和扩展请求体。"""
         model_ids = [model.id.strip() for model in self.llm_models]
         if any(not model_id for model_id in model_ids):
             raise ValueError("LLM_MODELS_JSON 中的模型 id 不能为空")
@@ -162,6 +285,33 @@ class Settings(BaseModel):
             raise ValueError("默认模型不支持 LLM_DEFAULT_THINKING=true")
         if "enable_thinking" in self.llm_extra_body:
             raise ValueError("LLM_EXTRA_BODY_JSON 不允许配置 enable_thinking")
+
+        embedding_ids = [model.id for model in self.embed_models]
+        if len(embedding_ids) != len(set(embedding_ids)):
+            raise ValueError("MUYE_LLM_EMBED_MODELS_JSON 中的模型 id 必须唯一")
+        if not embedding_ids:
+            raise ValueError("MUYE_LLM_EMBED_MODELS_JSON 至少需要配置一个模型")
+        if not self.embed_default_model:
+            self.embed_default_model = embedding_ids[0]
+        if self.embed_default_model not in embedding_ids:
+            raise ValueError(
+                "MUYE_LLM_EMBED_DEFAULT_MODEL 必须存在于 MUYE_LLM_EMBED_MODELS_JSON"
+            )
+
+        rerank_ids = [model.id for model in self.rerank_models]
+        if len(rerank_ids) != len(set(rerank_ids)):
+            raise ValueError("MUYE_LLM_RERANK_MODELS_JSON 中的模型 id 必须唯一")
+        if not self.rerank_default_model and rerank_ids:
+            self.rerank_default_model = rerank_ids[0]
+        if self.rerank_enabled:
+            if not self.rerank_api_url.strip():
+                raise ValueError("启用 Rerank 时 MUYE_LLM_RERANK_API_URL 不能为空")
+            if not rerank_ids:
+                raise ValueError("启用 Rerank 时 MUYE_LLM_RERANK_MODELS_JSON 不能为空")
+            if self.rerank_default_model not in rerank_ids:
+                raise ValueError(
+                    "MUYE_LLM_RERANK_DEFAULT_MODEL 必须存在于 MUYE_LLM_RERANK_MODELS_JSON"
+                )
 
 
 settings = Settings()

@@ -1,7 +1,7 @@
 """
 llm 服务入口
 
-功能：多厂商 LLM 统一代理（非流式 + 流式 + Embedding）
+功能：多厂商 LLM 统一代理（非流式 + 流式 + Embedding + Rerank）
 """
 import logging
 import time
@@ -35,9 +35,11 @@ async def lifespan(app: FastAPI):
     app.state.started_at = time.monotonic()
     try:
         logger.info(
-            "[lifespan] LLM 客户端初始化完成 default_model=%s default_thinking=%s",
+            "[lifespan] LLM 客户端初始化完成 default_model=%s "
+            "default_embedding_model=%s rerank_enabled=%s",
             settings.llm_default_model,
-            settings.llm_default_thinking,
+            settings.embed_default_model,
+            settings.rerank_enabled,
         )
         yield
     finally:
@@ -49,8 +51,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="muye-llm — LLM 代理服务",
-    description="多厂商 LLM 统一代理：非流式对话 / SSE 流式对话 / Embedding",
-    version="1.0.0",
+    description="多厂商 LLM 统一代理：非流式对话 / SSE 流式对话 / Embedding / Rerank",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -105,6 +107,11 @@ def validate_startup_configuration() -> list[str]:
         errors.append("MUYE_LLM_API_KEY 未配置（模型服务 API Key）")
     if not settings.embed_api_key.strip():
         errors.append("MUYE_LLM_EMBED_API_KEY 未配置（Embedding 服务 API Key）")
+    if settings.rerank_enabled:
+        if not settings.rerank_api_url.strip():
+            errors.append("MUYE_LLM_RERANK_API_URL 未配置（Rerank 完整服务 URL）")
+        if not settings.rerank_api_key.strip():
+            errors.append("MUYE_LLM_RERANK_API_KEY 未配置（Rerank 服务 API Key）")
     return errors
 
 

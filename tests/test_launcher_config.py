@@ -17,6 +17,11 @@ def _complete_llm_environment() -> dict[str, str]:
         "MUYE_LLM_EMBED_API_KEY": "test-embed-key",
         "MUYE_LLM_API_BASE_URL": "https://llm.example.test/v1",
         "MUYE_LLM_EMBED_API_BASE_URL": "https://embed.example.test/v1",
+        "MUYE_LLM_EMBED_DEFAULT_MODEL": "test-embedding",
+        "MUYE_LLM_EMBED_MODELS_JSON": (
+            '[{"id":"test-embedding","name":"Test Embedding",'
+            '"provider_model":"provider-embedding","dimensions":3}]'
+        ),
         "MUYE_LLM_DEFAULT_MODEL": "test-model",
         "MUYE_LLM_MODEL": "test-model",
         "MUYE_LLM_MODELS_JSON": (
@@ -92,6 +97,28 @@ def test_load_runtime_environment_keeps_shell_priority(tmp_path: Path, monkeypat
     assert launcher.os.environ["MUYE_LLM_DEFAULT_MODEL"] == "file-model"
 
 
+def test_read_llm_environment_preserves_legacy_positional_argument_order(
+    tmp_path: Path,
+) -> None:
+    """第二个位置参数必须继续表示主 Agent 配置，而不是 muye-data 配置。"""
+    llm_env = tmp_path / "llm.env"
+    agent_main_env = tmp_path / "agent-main.env"
+    data_env = tmp_path / "data.env"
+    llm_env.write_text("SHARED_VALUE=llm\n", encoding="utf-8")
+    agent_main_env.write_text("SHARED_VALUE=agent-main\n", encoding="utf-8")
+    data_env.write_text("SHARED_VALUE=muye-data\n", encoding="utf-8")
+
+    legacy_values = launcher.read_llm_environment(llm_env, agent_main_env)
+    values_with_data = launcher.read_llm_environment(
+        llm_env,
+        agent_main_env,
+        data_env_file=data_env,
+    )
+
+    assert legacy_values["SHARED_VALUE"] == "agent-main"
+    assert values_with_data["SHARED_VALUE"] == "agent-main"
+
+
 def test_main_stops_before_starting_services_when_configuration_is_missing(
     monkeypatch,
     capsys,
@@ -118,6 +145,7 @@ def test_each_service_provides_safe_environment_example() -> None:
     examples = [
         project_root / ".env.example",
         project_root / "muye-llm" / ".env.example",
+        project_root / "muye-data" / ".env.example",
         project_root / "agents" / "agent-main" / ".env.example",
         project_root / "agents" / "agent-travel" / ".env.example",
         project_root / "agents" / "agent-order" / ".env.example",
@@ -126,6 +154,10 @@ def test_each_service_provides_safe_environment_example() -> None:
     sensitive_names = {
         "MUYE_LLM_API_KEY",
         "MUYE_LLM_EMBED_API_KEY",
+        "MUYE_LLM_RERANK_API_KEY",
+        "MUYE_DATA_MILVUS_TOKEN",
+        "MUYE_DATA_OPENSEARCH_USERNAME",
+        "MUYE_DATA_OPENSEARCH_PASSWORD",
         "LANGSMITH_API_KEY",
         "LANGSEARCH_API_KEY",
         "TAVILY_API_KEY",
@@ -140,3 +172,33 @@ def test_each_service_provides_safe_environment_example() -> None:
         values = dotenv_values(example)
         for name in sensitive_names & values.keys():
             assert not values[name], f"{example} 中的 {name} 必须留空"
+
+
+def test_data_service_is_disabled_by_default() -> None:
+    services = launcher.enabled_services({})
+
+    assert "muye-data" not in {service["cwd"] for service in services}
+    assert launcher.validate_data_environment({}) == []
+
+
+def test_data_service_requires_existing_config_when_enabled(tmp_path: Path) -> None:
+    errors = launcher.validate_data_environment(
+        {"MUYE_DATA_ENABLED": "true", "MUYE_DATA_CONFIG_PATH": "missing.yaml"},
+        project_root=tmp_path,
+    )
+
+    assert any("文件不存在" in error for error in errors)
+
+
+def test_data_service_accepts_enabled_local_config(tmp_path: Path) -> None:
+    data_directory = tmp_path / "muye-data"
+    data_directory.mkdir()
+    (data_directory / "config.yaml").write_text("version: 1\n", encoding="utf-8")
+    values = {
+        "MUYE_DATA_ENABLED": "true",
+        "MUYE_DATA_CONFIG_PATH": "config.yaml",
+        "MUYE_DATA_LLM_BASE_URL": "http://muye-llm.test:9850",
+    }
+
+    assert launcher.validate_data_environment(values, project_root=tmp_path) == []
+    assert "muye-data" in {service["cwd"] for service in launcher.enabled_services(values)}

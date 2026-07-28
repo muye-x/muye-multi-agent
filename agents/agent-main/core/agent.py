@@ -123,7 +123,12 @@ class MainAgentOrchestrator:
 
         if self.enable_memory:
             from middleware.memory import MemoryMiddleware
-            middlewares.append(MemoryMiddleware(inject_memory=True, auto_save=True))
+            middlewares.append(
+                MemoryMiddleware(
+                    inject_memory=config.memory.injection_enabled,
+                    auto_save=True,
+                )
+            )
 
         from middleware import ChartFormatInjectorMiddleware
         middlewares.append(ChartFormatInjectorMiddleware(config={"enabled": True}))

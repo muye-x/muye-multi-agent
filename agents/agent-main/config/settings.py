@@ -402,7 +402,15 @@ class EvermemConfig:
 
 @dataclass
 class MemoryConfig:
-    """三层记忆系统总配置"""
+    """三层记忆系统总配置。
+
+    ``enabled`` 决定主 Agent 是否装配记忆中间件；关闭后不会建立任何
+    Redis、MongoDB 或 evermemOS 连接。
+    """
+    enabled: bool = field(
+        default_factory=lambda: os.getenv('MEMORY_ENABLED', 'true').lower() == 'true'
+    )
+
     # 各层配置
     redis: RedisConfig = field(default_factory=RedisConfig)
     mongodb: MongoDBConfig = field(default_factory=MongoDBConfig)
@@ -554,9 +562,12 @@ def validate_config(config: Config) -> None:
     if config.checkpointer.backend == 'postgres' and not config.checkpointer.postgresql_uri:
         errors.append("CHECKPOINTER_POSTGRESQL_URI 未配置（使用 PostgreSQL 后端时必需）")
 
-    # 验证 MongoDB 配置（如果使用）
-    if config.memory.enable_mongodb  and not  config.memory.mongodb.uri:
-        errors.append("MONGODB_URI 未配置（使用 MongoDB 后端时必需）")
+    # 记忆中间件关闭时，所有记忆后端配置均不应阻止主 Agent 启动。
+    # 启用时，长期记忆更新流程需要 MongoDB 保存结构化上下文。
+    if config.memory.enabled and not config.memory.enable_mongodb:
+        errors.append("MEMORY_ENABLED=true 时必须启用 MEMORY_ENABLE_MONGODB")
+    elif config.memory.enabled and not config.memory.mongodb.uri:
+        errors.append("MONGODB_URI 未配置（MEMORY_ENABLED=true 时必需）")
 
     if errors:
         error_msg = "配置验证失败:\n" + "\n".join(f"  - {e}" for e in errors)

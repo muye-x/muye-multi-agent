@@ -15,6 +15,7 @@ env/
 .envrc
 **/.env
 **/.env.*
+muye-data/config.yaml
 **/env.example
 !.env.example
 !**/.env.example

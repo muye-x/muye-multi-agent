@@ -24,3 +24,10 @@ class InvalidRequestException(LLMServiceException):
 
     def __init__(self, message: str = "请求参数非法") -> None:
         super().__init__(message, code=400)
+
+
+class ServiceUnavailableException(LLMServiceException):
+    """可选模型能力未启用或依赖当前不可用。"""
+
+    def __init__(self, message: str = "服务能力不可用") -> None:
+        super().__init__(message, code=503)

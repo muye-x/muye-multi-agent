@@ -1,5 +1,5 @@
-# 主 Agent 运行时直接依赖。固定远端提交，保证独立安装与 CI 可复现。
-muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@e909ead9ec12bb7c2362e87ac16799ee59f358eb
+# 主 Agent 运行时直接依赖。固定 SDK 发布 tag，保证独立安装与 CI 使用同一版本。
+muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@v1.1.0
 
 # HTTP API 与配置
 fastapi>=0.115.0

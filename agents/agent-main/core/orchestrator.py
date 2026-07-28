@@ -51,9 +51,12 @@ class AgentManager:
         return cls._instance
 
     async def initialize(self):
-        """初始化 Agent（启用记忆）"""
+        """根据运行配置初始化 Agent 和其持久化依赖。"""
         if not self.initialized:
-            logger.info("初始化 MainAgent（启用记忆）...")
+            from config import get_config
+
+            config = get_config()
+            logger.info("初始化 MainAgent（记忆功能：%s）...", "启用" if config.memory.enabled else "关闭")
 
             self.checkpointer_manager = CheckpointerManager(self._checkpointer_config())
             self.checkpointer = await self.checkpointer_manager.get(enabled=True)
@@ -62,7 +65,7 @@ class AgentManager:
 
             # 传递给 Agent
             self.agent = MainAgentOrchestrator(
-                enable_memory=True,
+                enable_memory=config.memory.enabled,
                 checkpointer=self.checkpointer
             )
             self.initialized = True
