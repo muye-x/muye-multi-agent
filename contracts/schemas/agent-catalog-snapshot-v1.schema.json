@@ -1,0 +1,194 @@
+{
+  "$defs": {
+    "AgentCatalogEntryV1": {
+      "additionalProperties": false,
+      "description": "MainAgent 加载的单个 SubAgent 可调用描述，URL 必须由服务名派生。",
+      "properties": {
+        "agent_id": {
+          "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "agent_version": {
+          "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "api_profile": {
+          "const": "internal",
+          "title": "Api Profile",
+          "type": "string"
+        },
+        "base_url": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Base Url",
+          "type": "string"
+        },
+        "capabilities_checksum": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Capabilities Checksum",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "descriptor_checksum": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Descriptor Checksum",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "image_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Image Digest",
+          "type": "string"
+        },
+        "internal_protocol_version": {
+          "pattern": "^muye-agent-internal/3(?:\\.\\d+)?$",
+          "title": "Internal Protocol Version",
+          "type": "string"
+        },
+        "resource_bindings": {
+          "items": {
+            "$ref": "#/$defs/ResourceBindingV1"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Resource Bindings",
+          "type": "array"
+        },
+        "service_name": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^agent-[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Service Name",
+          "type": "string"
+        },
+        "source_tree_checksum": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Tree Checksum",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "DISCOVERED",
+            "STARTING",
+            "ACTIVE",
+            "DEGRADED",
+            "INACTIVE",
+            "REJECTED"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "supported_intents": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Supported Intents",
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "tool_name": {
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "agent_version",
+        "tool_name",
+        "display_name",
+        "description",
+        "supported_intents",
+        "service_name",
+        "base_url",
+        "timeout_seconds",
+        "internal_protocol_version",
+        "api_profile",
+        "descriptor_checksum",
+        "source_tree_checksum",
+        "image_digest",
+        "resource_bindings",
+        "capabilities_checksum",
+        "status"
+      ],
+      "title": "AgentCatalogEntryV1",
+      "type": "object"
+    },
+    "ResourceBindingV1": {
+      "additionalProperties": false,
+      "description": "Agent 可访问的一个逻辑知识资源及其固定检索 Skill。",
+      "properties": {
+        "resource_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "skill_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+          "title": "Skill Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource_id",
+        "skill_ref"
+      ],
+      "title": "ResourceBindingV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/agent-catalog-snapshot-v1.schema.json",
+  "additionalProperties": false,
+  "description": "MainAgent 原子切换的不可变 Catalog 快照。",
+  "properties": {
+    "agents": {
+      "items": {
+        "$ref": "#/$defs/AgentCatalogEntryV1"
+      },
+      "maxItems": 20,
+      "title": "Agents",
+      "type": "array"
+    },
+    "catalog_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Catalog Checksum",
+      "type": "string"
+    },
+    "catalog_revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Catalog Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/agent-catalog-snapshot/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "catalog_revision",
+    "catalog_checksum"
+  ],
+  "title": "AgentCatalogSnapshotV1",
+  "type": "object"
+}

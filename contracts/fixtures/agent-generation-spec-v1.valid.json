@@ -1,0 +1,31 @@
+{
+  "schema_version": "muye.ai/agent-generation-spec/v1",
+  "agent_id": "agent_product_handbook",
+  "slug": "product-handbook",
+  "template_id": "react-knowledge",
+  "template_version": "1.0.0",
+  "sdk_version": "2.0.0",
+  "agent_profile_revision": "profile/product-handbook-v1",
+  "agent_profile_checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "resource_id": "kb.product_handbook",
+  "resource_revision": "resource/product-handbook-v4",
+  "skill_revision": "skill/product-handbook-v3",
+  "skill_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "model_alias": "chat-default",
+  "retrieval_pipeline": "hybrid",
+  "scope_filter_ref": "scope/product-handbook-v1",
+  "allowed_filter_fields": [
+    "product_version",
+    "document_type"
+  ],
+  "allowed_return_fields": [
+    "content",
+    "title",
+    "citation_id"
+  ],
+  "tool_budget": 6,
+  "token_budget": 8192,
+  "timeout_budget_seconds": 30,
+  "evaluation_set_ref": "evaluation/product-handbook-v1",
+  "input_checksum": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}

@@ -70,3 +70,7 @@ temp/
 *.rej
 
 docker-compose.override.yml
+
+# `agent sync` 的部署聚合与诊断报告由 CI/脚本重建，不作为源码事实提交。
+/compose.agents.generated.yaml
+/config/generated/catalog-report.json

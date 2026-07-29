@@ -1,0 +1,217 @@
+{
+  "$defs": {
+    "AgentDeploymentV1": {
+      "additionalProperties": false,
+      "description": "部署开关；生成完成后默认关闭，必须由开发者显式启用。",
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "title": "AgentDeploymentV1",
+      "type": "object"
+    },
+    "AgentRuntimeV1": {
+      "additionalProperties": false,
+      "description": "SubAgent 运行时预算；数值上限避免描述符被用作资源放大入口。",
+      "properties": {
+        "internal_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Internal Port",
+          "type": "integer"
+        },
+        "max_concurrency": {
+          "maximum": 128,
+          "minimum": 1,
+          "title": "Max Concurrency",
+          "type": "integer"
+        },
+        "memory_limit": {
+          "pattern": "^[1-9][0-9]{0,3}[mMgG]$",
+          "title": "Memory Limit",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "internal_port",
+        "timeout_seconds",
+        "max_concurrency",
+        "memory_limit"
+      ],
+      "title": "AgentRuntimeV1",
+      "type": "object"
+    },
+    "AgentSourceV1": {
+      "additionalProperties": false,
+      "description": "模板和 provenance 的可复现来源，不包含源码、密钥或部署地址。",
+      "properties": {
+        "provenance_file": {
+          "const": ".muye-generation.json",
+          "title": "Provenance File",
+          "type": "string"
+        },
+        "template_id": {
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Template Id",
+          "type": "string"
+        },
+        "template_version": {
+          "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+          "title": "Template Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "template_id",
+        "template_version",
+        "provenance_file"
+      ],
+      "title": "AgentSourceV1",
+      "type": "object"
+    },
+    "ResourceBindingV1": {
+      "additionalProperties": false,
+      "description": "Agent 可访问的一个逻辑知识资源及其固定检索 Skill。",
+      "properties": {
+        "resource_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "skill_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+          "title": "Skill Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource_id",
+        "skill_ref"
+      ],
+      "title": "ResourceBindingV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/agent-descriptor-v1.schema.json",
+  "additionalProperties": false,
+  "description": "`agent.yaml` 的身份、能力、资源和运行描述。",
+  "properties": {
+    "agent_id": {
+      "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "api_profile": {
+      "const": "internal",
+      "title": "Api Profile",
+      "type": "string"
+    },
+    "deployment": {
+      "$ref": "#/$defs/AgentDeploymentV1"
+    },
+    "description": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "display_name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Display Name",
+      "type": "string"
+    },
+    "entrypoint": {
+      "const": "main:app",
+      "title": "Entrypoint",
+      "type": "string"
+    },
+    "model_alias": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Model Alias",
+      "type": "string"
+    },
+    "protocol_version": {
+      "pattern": "^muye-agent-internal/3(?:\\.\\d+)?$",
+      "title": "Protocol Version",
+      "type": "string"
+    },
+    "resources": {
+      "items": {
+        "$ref": "#/$defs/ResourceBindingV1"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Resources",
+      "type": "array"
+    },
+    "runtime": {
+      "$ref": "#/$defs/AgentRuntimeV1"
+    },
+    "schema_version": {
+      "const": "muye.ai/agent-descriptor/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slug": {
+      "maxLength": 63,
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "title": "Slug",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/AgentSourceV1"
+    },
+    "supported_intents": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Supported Intents",
+      "type": "array"
+    },
+    "tool_name": {
+      "pattern": "^[a-z][a-z0-9_]{0,62}$",
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_id",
+    "slug",
+    "tool_name",
+    "display_name",
+    "version",
+    "description",
+    "supported_intents",
+    "entrypoint",
+    "api_profile",
+    "protocol_version",
+    "model_alias",
+    "resources",
+    "runtime",
+    "deployment",
+    "source"
+  ],
+  "title": "AgentDescriptorV1",
+  "type": "object"
+}

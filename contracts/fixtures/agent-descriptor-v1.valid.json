@@ -1,0 +1,37 @@
+{
+  "schema_version": "muye.ai/agent-descriptor/v1",
+  "agent_id": "agent_product_handbook",
+  "slug": "product-handbook",
+  "tool_name": "product_handbook_agent",
+  "display_name": "产品手册助手",
+  "version": "1.0.0",
+  "description": "回答已发布产品手册中的功能、配置和限制问题。",
+  "supported_intents": [
+    "产品功能咨询",
+    "配置与故障处理"
+  ],
+  "entrypoint": "main:app",
+  "api_profile": "internal",
+  "protocol_version": "muye-agent-internal/3.0",
+  "model_alias": "chat-default",
+  "resources": [
+    {
+      "resource_id": "kb.product_handbook",
+      "skill_ref": "skill_product_handbook@3"
+    }
+  ],
+  "runtime": {
+    "internal_port": 8000,
+    "timeout_seconds": 30,
+    "max_concurrency": 8,
+    "memory_limit": "1g"
+  },
+  "deployment": {
+    "enabled": false
+  },
+  "source": {
+    "template_id": "react-knowledge",
+    "template_version": "1.0.0",
+    "provenance_file": ".muye-generation.json"
+  }
+}

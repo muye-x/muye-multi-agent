@@ -1,0 +1,87 @@
+{
+  "$id": "https://muye.ai/schemas/source-provenance-v1.schema.json",
+  "additionalProperties": false,
+  "description": "首次模板生成的来源证明；其易变时间字段不参与源文件树 checksum。",
+  "properties": {
+    "generated_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "generated_files": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 200,
+      "minItems": 1,
+      "title": "Generated Files",
+      "type": "array"
+    },
+    "generated_source_tree_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Generated Source Tree Checksum",
+      "type": "string"
+    },
+    "generation_spec_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Generation Spec Checksum",
+      "type": "string"
+    },
+    "generator_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Generator Version",
+      "type": "string"
+    },
+    "knowledge_resource_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Knowledge Resource Checksum",
+      "type": "string"
+    },
+    "profile_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Profile Checksum",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/source-provenance/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sdk_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Sdk Version",
+      "type": "string"
+    },
+    "skill_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Skill Checksum",
+      "type": "string"
+    },
+    "template_id": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "title": "Template Id",
+      "type": "string"
+    },
+    "template_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Template Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "generator_version",
+    "template_id",
+    "template_version",
+    "sdk_version",
+    "generation_spec_checksum",
+    "knowledge_resource_checksum",
+    "skill_checksum",
+    "profile_checksum",
+    "generated_at",
+    "generated_files",
+    "generated_source_tree_checksum"
+  ],
+  "title": "SourceProvenanceV1",
+  "type": "object"
+}

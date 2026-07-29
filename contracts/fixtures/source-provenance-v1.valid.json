@@ -1,0 +1,19 @@
+{
+  "schema_version": "muye.ai/source-provenance/v1",
+  "generator_version": "2.0.0",
+  "template_id": "react-knowledge",
+  "template_version": "1.0.0",
+  "sdk_version": "2.0.0",
+  "generation_spec_checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "knowledge_resource_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "skill_checksum": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "profile_checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "generated_at": "2026-07-29T10:00:00Z",
+  "generated_files": [
+    "agent.py",
+    "main.py",
+    "prompts/system.md",
+    ".muye-generation.json"
+  ],
+  "generated_source_tree_checksum": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+}

@@ -1,0 +1,71 @@
+[
+  {
+    "name": "descriptor rejects public profile",
+    "model": "agent-descriptor-v1",
+    "patch": {
+      "api_profile": "public"
+    },
+    "error_field": "api_profile"
+  },
+  {
+    "name": "generation spec rejects unknown network input",
+    "model": "agent-generation-spec-v1",
+    "patch": {
+      "source_url": "https://untrusted.example/agent.py"
+    },
+    "error_field": "source_url"
+  },
+  {
+    "name": "provenance rejects parent directory traversal",
+    "model": "source-provenance-v1",
+    "patch": {
+      "generated_files": [
+        "../outside.py"
+      ]
+    },
+    "error_field": "generated_files"
+  },
+  {
+    "name": "build record rejects mutable image tag",
+    "model": "agent-build-record-v1",
+    "patch": {
+      "image_digest": "registry.example/agent:latest"
+    },
+    "error_field": "image_digest"
+  },
+  {
+    "name": "catalog rejects an external endpoint",
+    "model": "agent-catalog-snapshot-v1",
+    "patch": {
+      "agents": [
+        {
+          "agent_id": "agent_product_handbook",
+          "agent_version": "1.0.0",
+          "tool_name": "product_handbook_agent",
+          "display_name": "产品手册助手",
+          "description": "回答已发布产品手册中的功能、配置和限制问题。",
+          "supported_intents": [
+            "产品功能咨询"
+          ],
+          "service_name": "agent-product-handbook",
+          "base_url": "https://untrusted.example:8000",
+          "timeout_seconds": 30,
+          "internal_protocol_version": "muye-agent-internal/3.0",
+          "api_profile": "internal",
+          "descriptor_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "source_tree_checksum": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "image_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "resource_bindings": [
+            {
+              "resource_id": "kb.product_handbook",
+              "skill_ref": "skill_product_handbook@3"
+            }
+          ],
+          "capabilities_checksum": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    "error_field": "agents"
+  }
+]

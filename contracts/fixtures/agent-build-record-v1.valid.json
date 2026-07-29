@@ -1,0 +1,15 @@
+{
+  "schema_version": "muye.ai/agent-build-record/v1",
+  "build_record_id": "build_product_handbook",
+  "agent_id": "agent_product_handbook",
+  "agent_version": "1.0.0",
+  "descriptor_checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_tree_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "sdk_version": "2.0.0",
+  "base_image_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "image_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "sbom_ref": "artifacts/product-handbook/1.0.0/sbom.spdx.json",
+  "test_report_ref": "artifacts/product-handbook/1.0.0/tests.xml",
+  "built_at": "2026-07-29T10:05:00Z",
+  "builder_version": "2.0.0"
+}

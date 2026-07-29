@@ -1,0 +1,89 @@
+{
+  "$id": "https://muye.ai/schemas/agent-build-record-v1.schema.json",
+  "additionalProperties": false,
+  "description": "CI 或受信任本地构建产生的不可变镜像与验证证明。",
+  "properties": {
+    "agent_id": {
+      "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "agent_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Agent Version",
+      "type": "string"
+    },
+    "base_image_digest": {
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "title": "Base Image Digest",
+      "type": "string"
+    },
+    "build_record_id": {
+      "pattern": "^build_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Build Record Id",
+      "type": "string"
+    },
+    "builder_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Builder Version",
+      "type": "string"
+    },
+    "built_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "title": "Built At",
+      "type": "string"
+    },
+    "descriptor_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Descriptor Checksum",
+      "type": "string"
+    },
+    "image_digest": {
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "title": "Image Digest",
+      "type": "string"
+    },
+    "sbom_ref": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Sbom Ref",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/agent-build-record/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sdk_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Sdk Version",
+      "type": "string"
+    },
+    "source_tree_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Source Tree Checksum",
+      "type": "string"
+    },
+    "test_report_ref": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Test Report Ref",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "build_record_id",
+    "agent_id",
+    "agent_version",
+    "descriptor_checksum",
+    "source_tree_checksum",
+    "sdk_version",
+    "base_image_digest",
+    "image_digest",
+    "sbom_ref",
+    "test_report_ref",
+    "built_at",
+    "builder_version"
+  ],
+  "title": "AgentBuildRecordV1",
+  "type": "object"
+}

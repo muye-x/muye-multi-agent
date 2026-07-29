@@ -1,0 +1,154 @@
+{
+  "$id": "https://muye.ai/schemas/agent-generation-spec-v1.schema.json",
+  "additionalProperties": false,
+  "description": "模板生成器接收的已确认输入，LLM 不能直接构造该对象。",
+  "properties": {
+    "agent_id": {
+      "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "agent_profile_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Agent Profile Checksum",
+      "type": "string"
+    },
+    "agent_profile_revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Agent Profile Revision",
+      "type": "string"
+    },
+    "allowed_filter_fields": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50,
+      "title": "Allowed Filter Fields",
+      "type": "array"
+    },
+    "allowed_return_fields": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Allowed Return Fields",
+      "type": "array"
+    },
+    "evaluation_set_ref": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Evaluation Set Ref",
+      "type": "string"
+    },
+    "input_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Input Checksum",
+      "type": "string"
+    },
+    "model_alias": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Model Alias",
+      "type": "string"
+    },
+    "resource_id": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Resource Id",
+      "type": "string"
+    },
+    "resource_revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Resource Revision",
+      "type": "string"
+    },
+    "retrieval_pipeline": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Retrieval Pipeline",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/agent-generation-spec/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope_filter_ref": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Scope Filter Ref",
+      "type": "string"
+    },
+    "sdk_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Sdk Version",
+      "type": "string"
+    },
+    "skill_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Skill Checksum",
+      "type": "string"
+    },
+    "skill_revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Skill Revision",
+      "type": "string"
+    },
+    "slug": {
+      "maxLength": 63,
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "title": "Slug",
+      "type": "string"
+    },
+    "template_id": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "title": "Template Id",
+      "type": "string"
+    },
+    "template_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "title": "Template Version",
+      "type": "string"
+    },
+    "timeout_budget_seconds": {
+      "maximum": 300,
+      "minimum": 1,
+      "title": "Timeout Budget Seconds",
+      "type": "integer"
+    },
+    "token_budget": {
+      "maximum": 65536,
+      "minimum": 128,
+      "title": "Token Budget",
+      "type": "integer"
+    },
+    "tool_budget": {
+      "maximum": 20,
+      "minimum": 1,
+      "title": "Tool Budget",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_id",
+    "slug",
+    "template_id",
+    "template_version",
+    "sdk_version",
+    "agent_profile_revision",
+    "agent_profile_checksum",
+    "resource_id",
+    "resource_revision",
+    "skill_revision",
+    "skill_checksum",
+    "model_alias",
+    "retrieval_pipeline",
+    "scope_filter_ref",
+    "allowed_return_fields",
+    "tool_budget",
+    "token_budget",
+    "timeout_budget_seconds",
+    "evaluation_set_ref",
+    "input_checksum"
+  ],
+  "title": "AgentGenerationSpecV1",
+  "type": "object"
+}
