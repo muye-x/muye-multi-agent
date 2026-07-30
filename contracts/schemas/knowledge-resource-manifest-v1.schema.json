@@ -1,0 +1,280 @@
+{
+  "$defs": {
+    "PublishedPipelineV1": {
+      "additionalProperties": false,
+      "description": "已评测的资源 pipeline；参数范围与只读召回服务保持一致。",
+      "properties": {
+        "candidate_k": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate K"
+        },
+        "dense_candidate_k": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dense Candidate K"
+        },
+        "dense_weight": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dense Weight"
+        },
+        "keyword_candidate_k": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keyword Candidate K"
+        },
+        "keyword_weight": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keyword Weight"
+        },
+        "rank_constant": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank Constant"
+        },
+        "rerank_model": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Model"
+        },
+        "rerank_required": {
+          "default": false,
+          "title": "Rerank Required",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "dense",
+            "keyword",
+            "hybrid"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PublishedPipelineV1",
+      "type": "object"
+    },
+    "ResourceFieldMappingV1": {
+      "additionalProperties": false,
+      "description": "发布快照中可被 muye-data 消费的逻辑字段映射。",
+      "properties": {
+        "content": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "title": "Content",
+          "type": "string"
+        },
+        "exposed_fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Exposed Fields",
+          "type": "object"
+        },
+        "filterable_fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Filterable Fields",
+          "type": "object"
+        },
+        "id": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "keyword": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "title": "Keyword",
+          "type": "string"
+        },
+        "vector": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "title": "Vector",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content",
+        "vector",
+        "keyword"
+      ],
+      "title": "ResourceFieldMappingV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/knowledge-resource-manifest-v1.schema.json",
+  "additionalProperties": false,
+  "description": "已构建但尚未激活的逻辑 Resource 与不可变 Collection 绑定。",
+  "properties": {
+    "collection_plan_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Collection Plan Checksum",
+      "type": "string"
+    },
+    "connection": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Connection",
+      "type": "string"
+    },
+    "default_pipeline": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Default Pipeline",
+      "type": "string"
+    },
+    "default_return_fields": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Default Return Fields",
+      "type": "array"
+    },
+    "embedding_alias": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Embedding Alias",
+      "type": "string"
+    },
+    "embedding_dimensions": {
+      "maximum": 65536,
+      "minimum": 1,
+      "title": "Embedding Dimensions",
+      "type": "integer"
+    },
+    "fields": {
+      "$ref": "#/$defs/ResourceFieldMappingV1"
+    },
+    "knowledge_id": {
+      "pattern": "^kb[._][a-z0-9][a-z0-9_.-]{1,126}$",
+      "title": "Knowledge Id",
+      "type": "string"
+    },
+    "knowledge_version_id": {
+      "pattern": "^kv_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Knowledge Version Id",
+      "type": "string"
+    },
+    "pipelines": {
+      "additionalProperties": {
+        "$ref": "#/$defs/PublishedPipelineV1"
+      },
+      "maxProperties": 12,
+      "minProperties": 3,
+      "title": "Pipelines",
+      "type": "object"
+    },
+    "resource_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Resource Checksum",
+      "type": "string"
+    },
+    "resource_id": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Resource Id",
+      "type": "string"
+    },
+    "resource_revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Resource Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/knowledge-resource-manifest/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+      "title": "Target",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "resource_id",
+    "resource_revision",
+    "resource_checksum",
+    "knowledge_id",
+    "knowledge_version_id",
+    "collection_plan_checksum",
+    "connection",
+    "target",
+    "fields",
+    "embedding_alias",
+    "embedding_dimensions",
+    "pipelines",
+    "default_pipeline",
+    "default_return_fields"
+  ],
+  "title": "KnowledgeResourceManifestV1",
+  "type": "object"
+}

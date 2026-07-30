@@ -123,11 +123,10 @@ def test_backend_factory_rejects_missing_referenced_secret() -> None:
 
 def test_backend_factory_ignores_unreferenced_connection_credentials() -> None:
     payload = _valid_config()
-    payload["connections"]["unused_search"] = {
-        "type": "opensearch",
-        "hosts": ["http://search.test:9200"],
-        "username_env": "SEARCH_USERNAME",
-        "password_env": "SEARCH_PASSWORD",
+    payload["connections"]["unused_milvus"] = {
+        "type": "milvus",
+        "uri": "http://unused.test:19530",
+        "token_env": "UNUSED_MILVUS_TOKEN",
     }
     config = DataConfig.model_validate(payload)
 

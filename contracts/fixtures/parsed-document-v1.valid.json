@@ -1,0 +1,23 @@
+{
+  "schema_version": "muye.ai/parsed-document/v1",
+  "knowledge_id": "kb.product_handbook",
+  "knowledge_version_id": "kv_20260730a",
+  "document_id": "doc_0123456789abcdef",
+  "source_file_id": "file_0123456789abcdef",
+  "source_path": "product/handbook.md",
+  "source_checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "parser_profile": "docling-default-v1",
+  "blocks": [
+    {
+      "block_id": "block_0123456789abcdef",
+      "ordinal": 0,
+      "content": "退款政策允许用户在购买后十四天内申请退款。",
+      "locator": {
+        "source_path": "product/handbook.md",
+        "kind": "line",
+        "start": 3,
+        "end": 5
+      }
+    }
+  ]
+}

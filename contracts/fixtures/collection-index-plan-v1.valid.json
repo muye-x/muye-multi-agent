@@ -1,0 +1,29 @@
+{
+  "schema_version": "muye.ai/collection-index-plan/v1",
+  "knowledge_id": "kb.product_handbook",
+  "knowledge_version_id": "kv_20260730a",
+  "plan_revision": "plan/kv_20260730a",
+  "plan_checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "collection_name": "kb_product_handbook_20260730a",
+  "fields": [
+    {"name": "chunk_id", "data_type": "VARCHAR", "primary_key": true, "max_length": 128},
+    {"name": "knowledge_version_id", "data_type": "VARCHAR", "max_length": 128},
+    {"name": "document_id", "data_type": "VARCHAR", "max_length": 128},
+    {"name": "source_file_id", "data_type": "VARCHAR", "max_length": 128},
+    {"name": "content", "data_type": "VARCHAR", "max_length": 65535, "enable_analyzer": true},
+    {"name": "embedding", "data_type": "FLOAT_VECTOR", "dimension": 1024},
+    {"name": "sparse_embedding", "data_type": "SPARSE_FLOAT_VECTOR"},
+    {"name": "citation_id", "data_type": "VARCHAR", "max_length": 128},
+    {"name": "source_locators", "data_type": "JSON"},
+    {"name": "block_ids", "data_type": "JSON"},
+    {"name": "chunk_index", "data_type": "INT64"},
+    {"name": "content_hash", "data_type": "VARCHAR", "max_length": 64},
+    {"name": "metadata", "data_type": "JSON"},
+    {"name": "title", "data_type": "VARCHAR", "max_length": 512}
+  ],
+  "bm25_function_name": "bm25_content",
+  "indexes": [
+    {"field_name": "embedding", "index_type": "FLAT", "metric_type": "COSINE"},
+    {"field_name": "sparse_embedding", "index_type": "SPARSE_INVERTED_INDEX", "metric_type": "BM25"}
+  ]
+}

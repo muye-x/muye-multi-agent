@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,7 @@ from src.errors import (
     RerankUnavailableError,
 )
 from src.retrieval.service import RetrievalService
+from src.snapshots import canonical_checksum
 
 
 _MAIN_SPEC = importlib.util.spec_from_file_location(
@@ -354,6 +357,83 @@ def test_readiness_degrades_when_embedding_dimension_is_not_declared() -> None:
     assert available
     assert report.status == "degraded"
     assert report.resources["knowledge"].llm == "degraded"
+
+
+def test_resource_snapshot_reload_is_atomic_and_rejects_invalid_candidate(tmp_path: Path) -> None:
+    """候选 Snapshot 全量通过前不能替换服务中的旧逻辑 Resource。"""
+    service, backend, _ = _service()
+    snapshot_path = tmp_path / "resource-snapshot.json"
+    _write_snapshot(snapshot_path, target="candidate_documents")
+    service.configure_resource_snapshot(snapshot_path)
+
+    _write_snapshot(snapshot_path, target="published_documents")
+    os.utime(snapshot_path, ns=(1_000_000_000, 2_000_000_000))
+    assert service.reload_resource_snapshot() is True
+    asyncio.run(
+        service.retrieve(
+            RetrieveRequest(resource="knowledge", query="refund", pipeline="keyword", top_k=1)
+        )
+    )
+    assert backend.search_calls[-1].target == "published_documents"
+
+    invalid = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    invalid["resources"]["knowledge"]["target"] = "tampered_documents"
+    snapshot_path.write_text(json.dumps(invalid), encoding="utf-8")
+    os.utime(snapshot_path, ns=(1_000_000_000, 3_000_000_000))
+    with pytest.raises(ConfigurationError, match="checksum"):
+        service.reload_resource_snapshot()
+    asyncio.run(
+        service.retrieve(
+            RetrieveRequest(resource="knowledge", query="refund", pipeline="keyword", top_k=1)
+        )
+    )
+    assert backend.search_calls[-1].target == "published_documents"
+
+
+def _write_snapshot(path: Path, *, target: str) -> None:
+    """构造与阶段 4 Publisher 相同 checksum 规则的最小已发布 Resource Snapshot。"""
+    manifest = {
+        "schema_version": "muye.ai/knowledge-resource-manifest/v1",
+        "resource_id": "knowledge",
+        "resource_revision": "resource/kv_test",
+        "knowledge_id": "kb.test",
+        "knowledge_version_id": "kv_test",
+        "collection_plan_checksum": "a" * 64,
+        "connection": "database",
+        "target": target,
+        "fields": {
+            "id": "document_id",
+            "content": "content",
+            "vector": "embedding",
+            "keyword": "sparse",
+            "exposed_fields": {"title": "title", "citation_id": "citation_id"},
+            "filterable_fields": {"enabled": "enabled"},
+        },
+        "embedding_alias": "embed-v1",
+        "embedding_dimensions": 2,
+        "pipelines": {
+            "dense": {"type": "dense", "candidate_k": 3},
+            "keyword": {"type": "keyword", "candidate_k": 3},
+            "hybrid": {
+                "type": "hybrid",
+                "dense_candidate_k": 3,
+                "keyword_candidate_k": 3,
+                "dense_weight": 1.0,
+                "keyword_weight": 1.0,
+                "rank_constant": 60,
+            },
+        },
+        "default_pipeline": "hybrid",
+        "default_return_fields": ["title", "citation_id"],
+    }
+    manifest["resource_checksum"] = canonical_checksum(manifest)
+    snapshot = {
+        "schema_version": "muye.ai/resource-snapshot/v1",
+        "snapshot_revision": "snapshot/kv_test",
+        "resources": {"knowledge": manifest},
+    }
+    snapshot["snapshot_checksum"] = canonical_checksum(snapshot)
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
 
 
 def test_http_surface_is_readonly_and_errors_are_stable() -> None:

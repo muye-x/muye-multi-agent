@@ -74,3 +74,6 @@ docker-compose.override.yml
 # `agent sync` 的部署聚合与诊断报告由 CI/脚本重建，不作为源码事实提交。
 /compose.agents.generated.yaml
 /config/generated/catalog-report.json
+# Knowledge Worker 的运行时 Job/报告可重建；Proposal、Manifest 和 Snapshot 可提交审阅。
+/config/generated/knowledge-jobs/
+/config/generated/knowledge-reports/

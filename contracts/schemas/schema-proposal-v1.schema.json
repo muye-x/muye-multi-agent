@@ -1,0 +1,147 @@
+{
+  "$defs": {
+    "ChunkingPolicyV1": {
+      "additionalProperties": false,
+      "description": "确定性切分参数；字符而非 token 预算使离线构建可复现。",
+      "properties": {
+        "max_characters": {
+          "maximum": 12000,
+          "minimum": 200,
+          "title": "Max Characters",
+          "type": "integer"
+        },
+        "min_characters": {
+          "default": 80,
+          "maximum": 4000,
+          "minimum": 1,
+          "title": "Min Characters",
+          "type": "integer"
+        },
+        "overlap_characters": {
+          "default": 120,
+          "maximum": 4000,
+          "minimum": 0,
+          "title": "Overlap Characters",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_characters"
+      ],
+      "title": "ChunkingPolicyV1",
+      "type": "object"
+    },
+    "SchemaMetadataFieldV1": {
+      "additionalProperties": false,
+      "description": "可发布的受限元数据字段，禁止从文档正文派生任意数据库表达式。",
+      "properties": {
+        "filterable": {
+          "default": false,
+          "title": "Filterable",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "returnable": {
+          "default": false,
+          "title": "Returnable",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "boolean"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "SchemaMetadataFieldV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/schema-proposal-v1.schema.json",
+  "additionalProperties": false,
+  "description": "待人工确认的知识字段、切分和索引逻辑提案。",
+  "properties": {
+    "chunking": {
+      "$ref": "#/$defs/ChunkingPolicyV1"
+    },
+    "document_set_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Document Set Checksum",
+      "type": "string"
+    },
+    "embedding_alias": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Embedding Alias",
+      "type": "string"
+    },
+    "embedding_dimensions": {
+      "maximum": 65536,
+      "minimum": 1,
+      "title": "Embedding Dimensions",
+      "type": "integer"
+    },
+    "knowledge_id": {
+      "pattern": "^kb[._][a-z0-9][a-z0-9_.-]{1,126}$",
+      "title": "Knowledge Id",
+      "type": "string"
+    },
+    "knowledge_version_id": {
+      "pattern": "^kv_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Knowledge Version Id",
+      "type": "string"
+    },
+    "metadata_fields": {
+      "items": {
+        "$ref": "#/$defs/SchemaMetadataFieldV1"
+      },
+      "maxItems": 32,
+      "title": "Metadata Fields",
+      "type": "array"
+    },
+    "parser_profile": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Parser Profile",
+      "type": "string"
+    },
+    "proposal_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Proposal Checksum",
+      "type": "string"
+    },
+    "proposal_revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Proposal Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/schema-proposal/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "knowledge_id",
+    "knowledge_version_id",
+    "proposal_revision",
+    "proposal_checksum",
+    "parser_profile",
+    "embedding_alias",
+    "embedding_dimensions",
+    "chunking",
+    "document_set_checksum"
+  ],
+  "title": "SchemaProposalV1",
+  "type": "object"
+}

@@ -1,0 +1,101 @@
+{
+  "$id": "https://muye.ai/schemas/knowledge-job-v1.schema.json",
+  "additionalProperties": false,
+  "description": "本地 Knowledge Worker 的可持久化作业状态。\n\n``report_ref`` 只在完成状态中出现；取消是协作式的，Worker 会在每个可中断步骤\n前读取该状态，因此已经提交的不可变 Collection 不会被删除或覆盖。",
+  "properties": {
+    "attempt": {
+      "maximum": 10,
+      "minimum": 1,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "created_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "input_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Input Checksum",
+      "type": "string"
+    },
+    "job_id": {
+      "pattern": "^job_[a-f0-9]{16,64}$",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "build",
+        "evaluate"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "knowledge_slug": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "title": "Knowledge Slug",
+      "type": "string"
+    },
+    "report_ref": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Ref"
+    },
+    "schema_version": {
+      "const": "muye.ai/knowledge-job/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "QUEUED",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "updated_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "job_id",
+    "kind",
+    "knowledge_slug",
+    "status",
+    "attempt",
+    "created_at",
+    "updated_at",
+    "input_checksum"
+  ],
+  "title": "KnowledgeJobV1",
+  "type": "object"
+}

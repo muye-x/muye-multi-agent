@@ -20,7 +20,14 @@ from contracts.models import (
     AgentGenerationSpecV1,
     AgentRuntimeV1,
     AgentSourceV1,
+    CollectionIndexPlanV1,
+    EvaluationSetV1,
+    KnowledgeJobV1,
+    KnowledgeResourceManifestV1,
+    ParsedDocumentV1,
     ResourceBindingV1,
+    ResourceSnapshotV1,
+    SchemaProposalV1,
     SourceProvenanceV1,
 )
 
@@ -40,6 +47,13 @@ TYPESCRIPT_INTERFACE_MODELS: dict[str, type[BaseModel]] = {
     "AgentBuildRecordV1": AgentBuildRecordV1,
     "AgentCatalogEntryV1": AgentCatalogEntryV1,
     "AgentCatalogSnapshotV1": AgentCatalogSnapshotV1,
+    "ParsedDocumentV1": ParsedDocumentV1,
+    "SchemaProposalV1": SchemaProposalV1,
+    "CollectionIndexPlanV1": CollectionIndexPlanV1,
+    "KnowledgeResourceManifestV1": KnowledgeResourceManifestV1,
+    "ResourceSnapshotV1": ResourceSnapshotV1,
+    "EvaluationSetV1": EvaluationSetV1,
+    "KnowledgeJobV1": KnowledgeJobV1,
 }
 
 

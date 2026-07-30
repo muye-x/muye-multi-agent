@@ -1,0 +1,24 @@
+{
+  "schema_version": "muye.ai/schema-proposal/v1",
+  "knowledge_id": "kb.product_handbook",
+  "knowledge_version_id": "kv_20260730a",
+  "proposal_revision": "proposal/kv_20260730a",
+  "proposal_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "parser_profile": "docling-default-v1",
+  "embedding_alias": "text-embedding-default",
+  "embedding_dimensions": 1024,
+  "chunking": {
+    "max_characters": 1200,
+    "overlap_characters": 120,
+    "min_characters": 80
+  },
+  "metadata_fields": [
+    {
+      "name": "title",
+      "type": "string",
+      "filterable": false,
+      "returnable": true
+    }
+  ],
+  "document_set_checksum": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}

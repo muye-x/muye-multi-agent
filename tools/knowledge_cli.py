@@ -1,4 +1,4 @@
-"""阶段 3 的 `muye.sh knowledge` 输入检查与显式确认边界。"""
+"""`muye.sh knowledge` 的阶段 3 逻辑输入与阶段 4 构建 Job 命令。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Literal, Sequence
 from .agent_generator.approvals import ApprovalSubjectType, write_approval
 from .agent_generator.io import assert_path_within, load_yaml_model
 from .agent_generator.models import GenerationApprovalV1, KnowledgeGenerationInputV1
+from .knowledge_pipeline.worker import KnowledgeWorker
 
 
 def add_knowledge_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -32,18 +33,51 @@ def add_knowledge_parser(subparsers: argparse._SubParsersAction[argparse.Argumen
     approve_skill.add_argument("--checksum", required=True, help="审阅后确认的 Skill checksum")
     approve_skill.add_argument("--approved-by", required=True, help="确认人的稳定逻辑标识")
 
-    for command_name, help_text in (
-        ("build", "阶段 4 负责提交知识构建 Job"),
-        ("evaluate", "阶段 4 负责运行检索评测"),
-    ):
-        command = commands.add_parser(command_name, help=help_text)
-        command.add_argument("slug", help="知识配置 slug")
+    propose = commands.add_parser("propose-schema", help="解析阶段 4 源文件并生成 Schema Proposal")
+    propose.add_argument("slug", help="知识源配置 slug")
+    propose.add_argument("--import-root", required=True, type=Path, help="受控本地知识导入根")
+    propose.add_argument("--ocr-available", action="store_true", help="声明已启用 OCR Worker capability")
+
+    approve_proposal = commands.add_parser("approve-proposal", help="确认当前阶段 4 Schema Proposal checksum")
+    approve_proposal.add_argument("slug", help="知识源配置 slug")
+    approve_proposal.add_argument("--checksum", required=True, help="审阅后确认的 Proposal checksum")
+    approve_proposal.add_argument("--approved-by", required=True, help="确认人的稳定逻辑标识")
+
+    build = commands.add_parser("build", help="构建不可变 Milvus Collection 与待评测 Manifest")
+    build.add_argument("slug", help="知识源配置 slug")
+    build.add_argument("--import-root", type=Path, help="受控本地知识导入根")
+    build.add_argument("--ocr-available", action="store_true", help="声明已启用 OCR Worker capability")
+    build.add_argument("--llm-base-url", help="受信任 muye-llm 内网地址；默认读取环境")
+    build.add_argument("--milvus-uri", help="受信任 Milvus 地址；默认读取环境")
+
+    evaluate = commands.add_parser("evaluate", help="运行固定 RAG 评测，并在门禁通过后激活快照")
+    evaluate.add_argument("slug", help="知识源配置 slug")
+    evaluate.add_argument("--data-url", help="候选 muye-data 只读地址；默认读取环境")
+
+    status = commands.add_parser("status", help="查看本地 Knowledge Job 状态")
+    status.add_argument("job_id", help="知识 Job ID")
+
+    cancel = commands.add_parser("cancel", help="请求协作式取消本地 Knowledge Job")
+    cancel.add_argument("job_id", help="知识 Job ID")
+
+    retry = commands.add_parser("retry", help="为失败或取消的 Job 创建新的待执行记录")
+    retry.add_argument("job_id", help="知识 Job ID")
 
     parser.set_defaults(handler=run_knowledge_command)
 
 
 def run_knowledge_command(arguments: argparse.Namespace, workspace_root: Path) -> int:
-    """处理非破坏性知识命令；构建与评测在对应阶段前 fail closed。"""
+    """分派阶段 3 的离线确认与阶段 4 的受控 Knowledge Worker Job。"""
+    if arguments.knowledge_command in {
+        "propose-schema",
+        "approve-proposal",
+        "build",
+        "evaluate",
+        "status",
+        "cancel",
+        "retry",
+    }:
+        return _run_phase4_command(arguments, workspace_root)
     knowledge = _load_knowledge_input(workspace_root, arguments.slug)
     if arguments.knowledge_command == "analyze":
         _print_json(
@@ -75,11 +109,90 @@ def run_knowledge_command(arguments: argparse.Namespace, workspace_root: Path) -
             revision=knowledge.skill_revision,
             knowledge_slug=knowledge.knowledge_slug,
         )
-    if arguments.knowledge_command in {"build", "evaluate"}:
-        raise ValueError(
-            f"knowledge {arguments.knowledge_command} 尚未实现：它依赖阶段 4 的 Knowledge Worker、Job 和评测契约"
-        )
     raise ValueError(f"不支持的 knowledge 子命令：{arguments.knowledge_command}")
+
+
+def _run_phase4_command(arguments: argparse.Namespace, workspace_root: Path) -> int:
+    """执行阶段 4 写侧命令；仍不向 `muye-data` 暴露任何写入 HTTP API。"""
+    worker = KnowledgeWorker(workspace_root)
+    command = arguments.knowledge_command
+    if command == "propose-schema":
+        result = worker.propose_schema(
+            slug=arguments.slug,
+            import_root=arguments.import_root,
+            ocr_available=arguments.ocr_available,
+        )
+        _print_json(
+            {
+                "proposal": result.proposal_path.relative_to(workspace_root).as_posix(),
+                "proposal_checksum": result.proposal.proposal_checksum,
+                "proposal_revision": result.proposal.proposal_revision,
+                "status": "proposal-created",
+            }
+        )
+        return 0
+    if command == "approve-proposal":
+        path = worker.approve_schema(
+            slug=arguments.slug,
+            checksum=arguments.checksum,
+            approved_by=arguments.approved_by,
+        )
+        _print_json(
+            {
+                "approval": path.relative_to(workspace_root).as_posix(),
+                "status": "proposal-confirmed",
+            }
+        )
+        return 0
+    if command == "build":
+        if arguments.import_root is None:
+            raise ValueError("knowledge build 必须显式提供 --import-root")
+        result = worker.build(
+            slug=arguments.slug,
+            import_root=arguments.import_root,
+            ocr_available=arguments.ocr_available,
+            llm_base_url=arguments.llm_base_url,
+            milvus_uri=arguments.milvus_uri,
+        )
+        _print_json(
+            {
+                "job_id": result.job_id,
+                "manifest": (
+                    result.manifest.resource_checksum if result.manifest is not None else None
+                ),
+                "report": (
+                    result.report_path.relative_to(workspace_root).as_posix()
+                    if result.report_path is not None
+                    else None
+                ),
+                "status": worker.status(result.job_id)["status"],
+            }
+        )
+        return 0 if worker.status(result.job_id)["status"] == "SUCCEEDED" else 2
+    if command == "evaluate":
+        result = worker.evaluate(slug=arguments.slug, data_base_url=arguments.data_url)
+        _print_json(
+            {
+                "job_id": result.job_id,
+                "report": (
+                    result.report_path.relative_to(workspace_root).as_posix()
+                    if result.report_path is not None
+                    else None
+                ),
+                "status": worker.status(result.job_id)["status"],
+            }
+        )
+        return 0 if worker.status(result.job_id)["status"] == "SUCCEEDED" else 2
+    if command == "status":
+        _print_json(worker.status(arguments.job_id))
+        return 0
+    if command == "cancel":
+        _print_json(worker.cancel(arguments.job_id))
+        return 0
+    if command == "retry":
+        _print_json(worker.retry(arguments.job_id))
+        return 0
+    raise ValueError(f"不支持的阶段 4 knowledge 子命令：{command}")
 
 
 def _load_knowledge_input(workspace_root: Path, slug: str) -> KnowledgeGenerationInputV1:

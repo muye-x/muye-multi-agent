@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.backends.base import BackendHit
-from src.backends.filters import compile_milvus_filter, compile_opensearch_filter
+from src.backends.filters import compile_milvus_filter
 from src.contracts import FilterExpression
 from src.errors import InvalidRequestError
 from src.retrieval.fusion import rank_single_channel, weighted_rrf
@@ -30,22 +30,6 @@ def test_milvus_filter_uses_only_mapped_physical_fields() -> None:
     )
 
     assert expression == '(is_enabled == true && document_category in ["faq", "policy"])'
-
-
-def test_opensearch_filter_builds_structured_dsl() -> None:
-    expression = compile_opensearch_filter(
-        _filter(),
-        {"enabled": "metadata.enabled", "category": "metadata.category"},
-    )
-
-    assert expression == {
-        "bool": {
-            "filter": [
-                {"term": {"metadata.enabled": True}},
-                {"terms": {"metadata.category": ["faq", "policy"]}},
-            ]
-        }
-    }
 
 
 def test_filter_rejects_non_allowlisted_logical_field() -> None:
@@ -82,4 +66,3 @@ def test_weighted_rrf_merges_ids_and_fields() -> None:
     assert [item.id for item in fused] == ["a", "b"]
     assert fused[1].fields == {"source": "faq"}
     assert fused[0].score == pytest.approx(1 / 61 + 1 / 62)
-

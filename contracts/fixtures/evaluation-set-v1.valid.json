@@ -1,0 +1,18 @@
+{
+  "schema_version": "muye.ai/evaluation-set/v1",
+  "evaluation_set_id": "product_handbook_retrieval",
+  "revision": "evaluation/20260730a",
+  "checksum": "1111111111111111111111111111111111111111111111111111111111111111",
+  "recall_at_k": 5,
+  "min_recall": 0.8,
+  "min_mrr": 0.6,
+  "min_citation_coverage": 0.9,
+  "cases": [
+    {
+      "case_id": "refund_policy",
+      "query": "退款政策是什么？",
+      "relevant_chunk_ids": ["chunk_refund_policy"],
+      "required_citation_ids": ["citation_refund_policy"]
+    }
+  ]
+}

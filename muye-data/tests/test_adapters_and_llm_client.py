@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 
-from src.backends.base import DenseBackendQuery, KeywordBackendQuery, RetrievalBackend
+from src.backends.base import DenseBackendQuery, RetrievalBackend
 from src.backends.milvus import MilvusBackend
-from src.backends.opensearch import OpenSearchBackend
 from src.clients.llm import MuyeLLMClient
 from src.contracts import FilterExpression
 from src.errors import (
@@ -115,82 +113,6 @@ def test_milvus_adapter_distinguishes_permanent_and_transient_errors() -> None:
             await transient.search(_dense_query())
 
     asyncio.run(run())
-
-
-class _FakeOpenSearchClient:
-    def __init__(self) -> None:
-        self.search_kwargs: dict[str, Any] = {}
-        self.indices = SimpleNamespace(exists=self.exists)
-        self.closed = False
-
-    async def search(self, **kwargs: Any) -> dict[str, Any]:
-        self.search_kwargs = kwargs
-        return {
-            "hits": {
-                "hits": [
-                    {
-                        "_id": "fallback",
-                        "_score": 2.5,
-                        "_source": {
-                            "document_id": "doc-1",
-                            "body": {"text": "hello"},
-                            "metadata": {"title": "Nested"},
-                        },
-                    }
-                ]
-            }
-        }
-
-    async def exists(self, *, index: str) -> bool:
-        return index == "documents"
-
-    async def close(self) -> None:
-        self.closed = True
-
-
-def test_opensearch_adapter_builds_knn_dsl_and_reads_nested_source() -> None:
-    async def run() -> None:
-        client = _FakeOpenSearchClient()
-        backend = OpenSearchBackend(hosts=["http://search.test"], client=client)
-
-        hits = await backend.search(_dense_query())
-
-        assert hits[0].id == "doc-1"
-        assert hits[0].content == "hello"
-        assert hits[0].fields == {"title": "Nested"}
-        body = client.search_kwargs["body"]
-        assert body["query"]["knn"]["embedding"]["filter"] == {
-            "term": {"metadata.enabled": True}
-        }
-        assert await backend.health("documents", timeout_seconds=1)
-        await backend.aclose()
-        assert client.closed
-
-    asyncio.run(run())
-
-
-def test_opensearch_keyword_query_uses_match_and_filter() -> None:
-    query = KeywordBackendQuery(
-        target="documents",
-        id_field="document_id",
-        content_field="content",
-        keyword_field="content",
-        text="refund",
-        top_k=5,
-        returned_fields={},
-        filterable_fields={"enabled": "enabled"},
-        filter=FilterExpression(op="eq", field="enabled", value=True),
-        timeout_seconds=2,
-    )
-
-    body = OpenSearchBackend._build_body(query)
-
-    assert body["query"] == {
-        "bool": {
-            "must": [{"match": {"content": {"query": "refund"}}}],
-            "filter": [{"term": {"enabled": True}}],
-        }
-    }
 
 
 def test_readonly_protocol_has_no_mutation_methods() -> None:

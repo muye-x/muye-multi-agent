@@ -131,5 +131,136 @@
       ]
     },
     "error_field": "allowed_return_fields"
+  },
+  {
+    "name": "parsed document rejects source path traversal",
+    "model": "parsed-document-v1",
+    "patch": {
+      "source_path": "../secret.md"
+    },
+    "error_field": "source_path"
+  },
+  {
+    "name": "schema proposal rejects zero embedding dimensions",
+    "model": "schema-proposal-v1",
+    "patch": {
+      "embedding_dimensions": 0
+    },
+    "error_field": "embedding_dimensions"
+  },
+  {
+    "name": "collection plan rejects unsafe collection name",
+    "model": "collection-index-plan-v1",
+    "patch": {
+      "collection_name": "unsafe-name"
+    },
+    "error_field": "collection_name"
+  },
+  {
+    "name": "resource manifest rejects vector exposure",
+    "model": "knowledge-resource-manifest-v1",
+    "patch": {
+      "fields": {
+        "id": "chunk_id",
+        "content": "content",
+        "vector": "embedding",
+        "keyword": "sparse_embedding",
+        "exposed_fields": {
+          "raw_embedding": "embedding"
+        },
+        "filterable_fields": {
+          "knowledge_version_id": "knowledge_version_id"
+        }
+      }
+    },
+    "error_field": "default_return_fields 必须属于 exposed_fields"
+  },
+  {
+    "name": "resource snapshot rejects mismatched resource key",
+    "model": "resource-snapshot-v1",
+    "patch": {
+      "resources": {
+        "wrong_resource": {
+          "schema_version": "muye.ai/knowledge-resource-manifest/v1",
+          "resource_id": "kb.product_handbook",
+          "resource_revision": "resource/kv_20260730a",
+          "resource_checksum": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "knowledge_id": "kb.product_handbook",
+          "knowledge_version_id": "kv_20260730a",
+          "collection_plan_checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "connection": "milvus_default",
+          "target": "kb_product_handbook_20260730a",
+          "fields": {
+            "id": "chunk_id",
+            "content": "content",
+            "vector": "embedding",
+            "keyword": "sparse_embedding",
+            "exposed_fields": {
+              "title": "title"
+            },
+            "filterable_fields": {
+              "knowledge_version_id": "knowledge_version_id"
+            }
+          },
+          "embedding_alias": "text-embedding-default",
+          "embedding_dimensions": 1024,
+          "pipelines": {
+            "dense": {
+              "type": "dense",
+              "candidate_k": 50
+            },
+            "keyword": {
+              "type": "keyword",
+              "candidate_k": 50
+            },
+            "hybrid": {
+              "type": "hybrid",
+              "dense_candidate_k": 50,
+              "keyword_candidate_k": 50,
+              "dense_weight": 1.0,
+              "keyword_weight": 1.0,
+              "rank_constant": 60
+            }
+          },
+          "default_pipeline": "hybrid",
+          "default_return_fields": [
+            "title"
+          ]
+        }
+      }
+    },
+    "error_field": "resources key 必须等于 resource_id"
+  },
+  {
+    "name": "evaluation set rejects duplicate case ids",
+    "model": "evaluation-set-v1",
+    "patch": {
+      "cases": [
+        {
+          "case_id": "refund_policy",
+          "query": "退款政策是什么？",
+          "relevant_chunk_ids": [
+            "chunk_refund_policy"
+          ]
+        },
+        {
+          "case_id": "refund_policy",
+          "query": "退款政策有哪些？",
+          "relevant_chunk_ids": [
+            "chunk_refund_policy"
+          ]
+        }
+      ]
+    },
+    "error_field": "evaluation cases.case_id 不能重复"
+  },
+  {
+    "name": "knowledge job rejects running report",
+    "model": "knowledge-job-v1",
+    "patch": {
+      "status": "RUNNING",
+      "report_ref": "config/generated/knowledge-reports/job_0123456789abcdef.json"
+    },
+    "error_field": "未完成作业不能包含 report_ref 或 error_code"
   }
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -28,6 +29,7 @@ from src.config import ServiceSettings, load_data_config  # noqa: E402
 from src.contracts import ErrorResponse  # noqa: E402
 from src.errors import ConfigurationError, DataServiceError  # noqa: E402
 from src.retrieval.service import RetrievalService  # noqa: E402
+from src.snapshots import load_resource_snapshot  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
@@ -37,20 +39,50 @@ def _config_path(settings: ServiceSettings) -> Path:
     return settings.config_path if settings.config_path.is_absolute() else SERVICE_DIR / settings.config_path
 
 
+def _snapshot_path(settings: ServiceSettings) -> Path | None:
+    """将快照相对路径解析到服务目录，部署可通过绝对挂载路径覆盖。"""
+    if settings.resource_snapshot_path is None:
+        return None
+    return (
+        settings.resource_snapshot_path
+        if settings.resource_snapshot_path.is_absolute()
+        else SERVICE_DIR / settings.resource_snapshot_path
+    )
+
+
 def build_service(settings: ServiceSettings) -> RetrievalService:
     """从本地配置装配运行时；客户端保持惰性，不在此阶段访问网络。"""
     config = load_data_config(_config_path(settings))
+    snapshot_path = _snapshot_path(settings)
+    if snapshot_path is not None:
+        snapshot = load_resource_snapshot(snapshot_path, known_connections=set(config.connections))
+        config = config.model_copy(update={"resources": snapshot.resources})
     backends = build_backends(config)
     llm_client = MuyeLLMClient(
         base_url=settings.llm_base_url,
         timeout_seconds=settings.llm_timeout_seconds,
     )
-    return RetrievalService(
+    service = RetrievalService(
         config=config,
         settings=settings,
         backends=backends,
         llm_client=llm_client,
     )
+    if snapshot_path is not None:
+        service.configure_resource_snapshot(snapshot_path)
+    return service
+
+
+async def _resource_snapshot_reload_loop(service: RetrievalService, interval_seconds: float) -> None:
+    """轮询已挂载 Snapshot；无效候选仅记录错误并继续服务旧资源表。"""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            service.reload_resource_snapshot()
+        except ConfigurationError as exc:
+            logger.error("resource snapshot reload rejected: %s", exc)
+        except Exception:
+            logger.exception("resource snapshot reload failed")
 
 
 def _trace_id(request: Request, body: Any | None = None) -> str:
@@ -99,10 +131,24 @@ def create_app(
         app.state.started_at = time.monotonic()
         owned_service = service is None
         app.state.retrieval_service = service or build_service(settings)
+        reload_task: asyncio.Task[None] | None = None
+        if owned_service and settings.resource_snapshot_path is not None:
+            reload_task = asyncio.create_task(
+                _resource_snapshot_reload_loop(
+                    app.state.retrieval_service,
+                    settings.resource_snapshot_poll_seconds,
+                )
+            )
         logger.info("muye-data started port=%s", settings.port)
         try:
             yield
         finally:
+            if reload_task is not None:
+                reload_task.cancel()
+                try:
+                    await reload_task
+                except asyncio.CancelledError:
+                    pass
             if owned_service:
                 await app.state.retrieval_service.aclose()
             logger.info("muye-data stopped")

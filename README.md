@@ -33,7 +33,7 @@ Client
           +-- agent-main: 9860
                   |
                   +-- muye-llm: 9850 -> OpenAI-compatible 上游
-                  +-- muye-data: 9840 -> Milvus / OpenSearch（可选、只读）
+                  +-- muye-data: 9840 -> Milvus（可选、只读）
                   +-- agent-travel: 8011 (internal + public)
                   +-- agent-order: 8012 (internal only)
 ```
@@ -112,7 +112,7 @@ Shell 环境变量 > 当前服务目录 .env > 源码默认值
 `--dry-run` 只检查服务入口和配置，不启动进程；即使没有真实密钥也可用于 CI 结构检查。
 启动器按 `muye-llm -> muye-data（启用时） -> agent-main -> agent-travel -> agent-order -> dashboard-api`
 顺序等待健康检查。`MUYE_DATA_ENABLED=false` 时跳过数据服务，因此默认本地运行不要求
-Milvus 或 OpenSearch。本地控制台位于：
+Milvus。本地控制台位于：
 
 ```text
 http://127.0.0.1:9870/console/online.html
@@ -201,8 +201,12 @@ v2.0 的知识 Agent 由本地、确定性 Generator 生成，首次产物位于
 命令可从任意目录调用，Shell wrapper 会定位 Scaffold 根目录并使用根 `.venv`。三个确认命令会在
 `config/approvals/{resource,skill,profile}/` 写入可提交的审批记录；任一 revision 或 checksum 变化后必须
 重新确认，Generator 缺少匹配记录时会拒绝生成。输入配置结构、生成后的接管流程及模板升级方式见
-[模板 Agent Generator 与开发者接管](docs/v2.0-agent-generator.md)。知识构建和检索评测的实际 Job 在阶段 4
-引入；在此之前 `knowledge build` 与 `knowledge evaluate` 会明确失败，不会产生半成品。
+[模板 Agent Generator 与开发者接管](docs/v2.0-agent-generator.md)。阶段 4 的源文件构建配置与上述逻辑
+输入隔离在 `config/knowledge-sources/`：先生成并确认 Schema Proposal，再构建不可变 Milvus Collection 与
+候选 Snapshot；隔离评测通过后才会原子发布 active Snapshot。阶段 3 的
+`knowledge analyze/approve-schema/approve-skill` 不变，阶段 4 使用 `knowledge propose-schema` 与
+`knowledge approve-proposal`。完整流程、OCR 依赖、Job 状态和评测发布见
+[知识 Pipeline 与评测](docs/v2.0-knowledge-pipeline.md)。
 
 ## 安全边界
 

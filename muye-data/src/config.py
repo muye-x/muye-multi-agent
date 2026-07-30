@@ -51,42 +51,7 @@ class MilvusConnectionConfig(StrictConfigModel):
         return normalized
 
 
-class OpenSearchConnectionConfig(StrictConfigModel):
-    """OpenSearch 连接定义；用户名和密码必须成对引用环境变量。"""
-
-    type: Literal["opensearch"]
-    hosts: list[str] = Field(min_length=1, max_length=16)
-    username_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
-    password_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
-    verify_certs: bool = True
-    ca_certs: str | None = Field(default=None, min_length=1, max_length=2048)
-
-    @field_validator("hosts")
-    @classmethod
-    def validate_hosts(cls, value: list[str]) -> list[str]:
-        """仅接受 HTTP(S) URL，避免将任意连接参数透传给客户端。"""
-        normalized: list[str] = []
-        for host in value:
-            candidate = host.strip().rstrip("/")
-            parsed = urlparse(candidate)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValueError("OpenSearch hosts 必须是 HTTP(S) URL")
-            if parsed.username is not None or parsed.password is not None:
-                raise ValueError("OpenSearch hosts 不能包含凭据")
-            normalized.append(candidate)
-        return normalized
-
-    @model_validator(mode="after")
-    def validate_credentials(self) -> "OpenSearchConnectionConfig":
-        if bool(self.username_env) != bool(self.password_env):
-            raise ValueError("username_env 与 password_env 必须同时配置")
-        return self
-
-
-ConnectionConfig = Annotated[
-    MilvusConnectionConfig | OpenSearchConnectionConfig,
-    Field(discriminator="type"),
-]
+ConnectionConfig = MilvusConnectionConfig
 
 
 class FieldMapping(StrictConfigModel):
@@ -221,7 +186,7 @@ class DataConfig(StrictConfigModel):
 
     version: Literal[1]
     connections: dict[str, ConnectionConfig] = Field(min_length=1)
-    resources: dict[str, ResourceConfig] = Field(min_length=1)
+    resources: dict[str, ResourceConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_references(self) -> "DataConfig":
@@ -334,6 +299,8 @@ class ServiceSettings(StrictConfigModel):
     total_timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
     backend_max_retries: int = Field(ge=0, le=1)
     rerank_max_documents: int = Field(ge=100, le=1000)
+    resource_snapshot_path: Path | None = None
+    resource_snapshot_poll_seconds: float = Field(default=5.0, gt=0, le=300, allow_inf_nan=False)
 
     @field_validator("llm_base_url")
     @classmethod
@@ -373,5 +340,16 @@ class ServiceSettings(StrictConfigModel):
                 "100",
                 minimum=100,
                 maximum=1000,
+            ),
+            resource_snapshot_path=(
+                Path(snapshot_path)
+                if (snapshot_path := source.get("MUYE_DATA_RESOURCE_SNAPSHOT_PATH", "").strip())
+                else None
+            ),
+            resource_snapshot_poll_seconds=_env_float(
+                source,
+                "MUYE_DATA_RESOURCE_SNAPSHOT_POLL_SECONDS",
+                "5",
+                minimum=0,
             ),
         )

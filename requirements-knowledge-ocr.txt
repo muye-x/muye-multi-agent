@@ -1,0 +1,4 @@
+# 独立 OCR Worker profile；仅在已部署 Paddle OCR capability 时安装。
+-r requirements-knowledge-docling.txt
+paddleocr>=2.9.0,<3.0.0
+paddlepaddle>=2.6.0,<3.0.0

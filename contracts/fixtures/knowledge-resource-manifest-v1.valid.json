@@ -1,0 +1,41 @@
+{
+  "schema_version": "muye.ai/knowledge-resource-manifest/v1",
+  "resource_id": "kb.product_handbook",
+  "resource_revision": "resource/kv_20260730a",
+  "resource_checksum": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "knowledge_id": "kb.product_handbook",
+  "knowledge_version_id": "kv_20260730a",
+  "collection_plan_checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "connection": "milvus_default",
+  "target": "kb_product_handbook_20260730a",
+  "fields": {
+    "id": "chunk_id",
+    "content": "content",
+    "vector": "embedding",
+    "keyword": "sparse_embedding",
+    "exposed_fields": {
+      "title": "title",
+      "citation_id": "citation_id",
+      "source_locators": "source_locators"
+    },
+    "filterable_fields": {
+      "knowledge_version_id": "knowledge_version_id"
+    }
+  },
+  "embedding_alias": "text-embedding-default",
+  "embedding_dimensions": 1024,
+  "pipelines": {
+    "dense": {"type": "dense", "candidate_k": 50},
+    "keyword": {"type": "keyword", "candidate_k": 50},
+    "hybrid": {
+      "type": "hybrid",
+      "dense_candidate_k": 50,
+      "keyword_candidate_k": 50,
+      "dense_weight": 1.0,
+      "keyword_weight": 1.0,
+      "rank_constant": 60
+    }
+  },
+  "default_pipeline": "hybrid",
+  "default_return_fields": ["title", "citation_id", "source_locators"]
+}

@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "CollectionFieldPlanV1": {
+      "additionalProperties": false,
+      "description": "Planner 输出的固定 Milvus 字段，类型集合不允许透传原生 DDL。",
+      "properties": {
+        "data_type": {
+          "enum": [
+            "VARCHAR",
+            "INT64",
+            "JSON",
+            "FLOAT_VECTOR",
+            "SPARSE_FLOAT_VECTOR"
+          ],
+          "title": "Data Type",
+          "type": "string"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "maximum": 65536,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dimension"
+        },
+        "enable_analyzer": {
+          "default": false,
+          "title": "Enable Analyzer",
+          "type": "boolean"
+        },
+        "max_length": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Length"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "primary_key": {
+          "default": false,
+          "title": "Primary Key",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "data_type"
+      ],
+      "title": "CollectionFieldPlanV1",
+      "type": "object"
+    },
+    "MilvusIndexPlanV1": {
+      "additionalProperties": false,
+      "description": "受限的 Milvus 索引描述，供 Publisher 创建和回读验证。",
+      "properties": {
+        "field_name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "title": "Field Name",
+          "type": "string"
+        },
+        "index_type": {
+          "enum": [
+            "FLAT",
+            "SPARSE_INVERTED_INDEX"
+          ],
+          "title": "Index Type",
+          "type": "string"
+        },
+        "metric_type": {
+          "enum": [
+            "COSINE",
+            "IP",
+            "L2",
+            "BM25"
+          ],
+          "title": "Metric Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field_name",
+        "index_type",
+        "metric_type"
+      ],
+      "title": "MilvusIndexPlanV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/collection-index-plan-v1.schema.json",
+  "additionalProperties": false,
+  "description": "由确认 Proposal 确定性派生的不可变 Milvus Collection 计划。",
+  "properties": {
+    "bm25_function_name": {
+      "const": "bm25_content",
+      "title": "Bm25 Function Name",
+      "type": "string"
+    },
+    "collection_name": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+      "title": "Collection Name",
+      "type": "string"
+    },
+    "fields": {
+      "items": {
+        "$ref": "#/$defs/CollectionFieldPlanV1"
+      },
+      "maxItems": 64,
+      "minItems": 8,
+      "title": "Fields",
+      "type": "array"
+    },
+    "indexes": {
+      "items": {
+        "$ref": "#/$defs/MilvusIndexPlanV1"
+      },
+      "maxItems": 8,
+      "minItems": 2,
+      "title": "Indexes",
+      "type": "array"
+    },
+    "knowledge_id": {
+      "pattern": "^kb[._][a-z0-9][a-z0-9_.-]{1,126}$",
+      "title": "Knowledge Id",
+      "type": "string"
+    },
+    "knowledge_version_id": {
+      "pattern": "^kv_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Knowledge Version Id",
+      "type": "string"
+    },
+    "plan_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Plan Checksum",
+      "type": "string"
+    },
+    "plan_revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Plan Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/collection-index-plan/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "knowledge_id",
+    "knowledge_version_id",
+    "plan_revision",
+    "plan_checksum",
+    "collection_name",
+    "fields",
+    "bm25_function_name",
+    "indexes"
+  ],
+  "title": "CollectionIndexPlanV1",
+  "type": "object"
+}

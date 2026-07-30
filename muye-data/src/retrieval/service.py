@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, cast
 
 from src.backends.base import (
@@ -53,6 +54,7 @@ from src.errors import (
     RetrievalUnavailableError,
 )
 from src.retrieval.fusion import rank_single_channel, weighted_rrf
+from src.snapshots import LoadedResourceSnapshot, load_resource_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -74,19 +76,24 @@ class RetrievalService:
         backends: Mapping[str, RetrievalBackend],
         llm_client: MuyeLLMClient | Any,
     ) -> None:
-        required_backends = {resource.connection for resource in config.resources.values()}
-        missing_backends = required_backends - set(backends)
-        if missing_backends:
-            raise ConfigurationError("存在未构造的数据库 connection")
         self._config = config
         self._settings = settings
         self._backends = dict(backends)
         self._llm_client = llm_client
-        self._validate_backend_capabilities()
+        self._resources = dict(config.resources)
+        self._snapshot_path: Path | None = None
+        self._snapshot_mtime_ns: int | None = None
+        self._snapshot_revision: str | None = None
+        self._snapshot_checksum: str | None = None
+        self._validate_resource_set(self._resources)
 
-    def _validate_backend_capabilities(self) -> None:
-        """启动时拒绝资源 pipeline 与适配器只读能力不匹配的配置。"""
-        for resource in self._config.resources.values():
+    def _validate_resource_set(self, resources: Mapping[str, ResourceConfig]) -> None:
+        """拒绝资源 pipeline 与已构造只读适配器能力不匹配的候选资源表。"""
+        required_backends = {resource.connection for resource in resources.values()}
+        missing_backends = required_backends - set(self._backends)
+        if missing_backends:
+            raise ConfigurationError("存在未构造的数据库 connection")
+        for resource in resources.values():
             capabilities = self._backends[resource.connection].capabilities
             if resource.fields.filterable_fields and not capabilities.filters:
                 raise ConfigurationError("资源公开了 filter，但数据库适配器不支持过滤")
@@ -97,10 +104,54 @@ class RetrievalService:
                     raise ConfigurationError("keyword/hybrid pipeline 与数据库适配器能力不匹配")
 
     def _resource(self, name: str, *, trace_id: str = "") -> ResourceConfig:
-        resource = self._config.resources.get(name)
+        resource = self._resources.get(name)
         if resource is None:
             raise ResourceNotFoundError(trace_id=trace_id)
         return resource
+
+    def configure_resource_snapshot(self, path: Path) -> None:
+        """登记启动后轮询的 Snapshot 文件；初始候选须已由启动装配验证。"""
+        if path.is_symlink():
+            raise ConfigurationError("Resource Snapshot 路径不能是符号链接")
+        self._snapshot_path = path
+        try:
+            self._snapshot_mtime_ns = path.stat().st_mtime_ns
+        except OSError as exc:
+            raise ConfigurationError("无法读取 Resource Snapshot 元数据") from exc
+
+    def reload_resource_snapshot(self) -> bool:
+        """完整验证候选快照后原子替换资源表；异常时保留现有服务版本。"""
+        if self._snapshot_path is None:
+            return False
+        try:
+            stat = self._snapshot_path.stat()
+        except OSError as exc:
+            raise ConfigurationError("无法读取 Resource Snapshot 元数据") from exc
+        if self._snapshot_mtime_ns == stat.st_mtime_ns:
+            return False
+        candidate = load_resource_snapshot(
+            self._snapshot_path,
+            known_connections=set(self._backends),
+        )
+        self._validate_resource_set(candidate.resources)
+        self._resources = dict(candidate.resources)
+        self._snapshot_mtime_ns = stat.st_mtime_ns
+        self._snapshot_revision = candidate.revision
+        self._snapshot_checksum = candidate.checksum
+        logger.info(
+            "resource snapshot reloaded revision=%s checksum=%s resource_count=%s",
+            candidate.revision,
+            candidate.checksum,
+            len(candidate.resources),
+        )
+        return True
+
+    def replace_resource_snapshot(self, snapshot: LoadedResourceSnapshot) -> None:
+        """供启动装配使用已验证快照替换资源表，不暴露 HTTP 写入面。"""
+        self._validate_resource_set(snapshot.resources)
+        self._resources = dict(snapshot.resources)
+        self._snapshot_revision = snapshot.revision
+        self._snapshot_checksum = snapshot.checksum
 
     @staticmethod
     def _pipeline(
@@ -534,7 +585,7 @@ class RetrievalService:
         """汇总资源依赖状态；单个资源故障不会隐藏其他资源的可用性。"""
         llm_needed = any(
             self._pipeline_uses_llm(pipeline)
-            for resource in self._config.resources.values()
+            for resource in self._resources.values()
             for pipeline in resource.pipelines.values()
         )
         llm_capabilities: LLMModelCapabilities | None = None
@@ -587,7 +638,7 @@ class RetrievalService:
             )
 
         statuses = await asyncio.gather(
-            *(resource_status(name, resource) for name, resource in self._config.resources.items())
+            *(resource_status(name, resource) for name, resource in self._resources.items())
         )
         resources = dict(statuses)
         available_count = sum(

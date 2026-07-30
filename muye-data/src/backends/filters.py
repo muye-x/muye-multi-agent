@@ -1,10 +1,9 @@
-"""受限过滤 AST 到 Milvus 表达式和 OpenSearch DSL 的转换。"""
+"""受限过滤 AST 到 Milvus 表达式的转换。"""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
 
 from src.contracts import FilterExpression, ScalarValue
 from src.errors import InvalidRequestError
@@ -44,31 +43,3 @@ def compile_milvus_filter(
         parts = [compile_milvus_filter(child, fields) for child in expression.conditions or []]
         return "(" + operator.join(parts) + ")"
     return f"not ({compile_milvus_filter(expression.condition, fields)})"
-
-
-def compile_opensearch_filter(
-    expression: FilterExpression | None,
-    fields: Mapping[str, str],
-) -> dict[str, Any] | None:
-    """将受限 AST 编译为 OpenSearch query DSL object。"""
-    if expression is None:
-        return None
-    field_name = _physical_field(expression.field, fields) if expression.field else ""
-    if expression.op == "eq":
-        return {"term": {field_name: expression.value}}
-    if expression.op == "ne":
-        return {"bool": {"must_not": [{"term": {field_name: expression.value}}]}}
-    if expression.op in {"gt", "gte", "lt", "lte"}:
-        return {"range": {field_name: {expression.op: expression.value}}}
-    if expression.op == "in":
-        return {"terms": {field_name: expression.values}}
-    if expression.op == "not_in":
-        return {"bool": {"must_not": [{"terms": {field_name: expression.values}}]}}
-    if expression.op in {"and", "or"}:
-        compiled = [compile_opensearch_filter(child, fields) for child in expression.conditions or []]
-        bool_key = "filter" if expression.op == "and" else "should"
-        body: dict[str, Any] = {bool_key: compiled}
-        if expression.op == "or":
-            body["minimum_should_match"] = 1
-        return {"bool": body}
-    return {"bool": {"must_not": [compile_opensearch_filter(expression.condition, fields)]}}

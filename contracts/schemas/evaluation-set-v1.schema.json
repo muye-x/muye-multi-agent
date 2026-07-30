@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "EvaluationCaseV1": {
+      "additionalProperties": false,
+      "description": "固定评测问题及其相关 chunk/citation 集。",
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "query": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Query",
+          "type": "string"
+        },
+        "relevant_chunk_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Relevant Chunk Ids",
+          "type": "array"
+        },
+        "required_citation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Required Citation Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "case_id",
+        "query",
+        "relevant_chunk_ids"
+      ],
+      "title": "EvaluationCaseV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/evaluation-set-v1.schema.json",
+  "additionalProperties": false,
+  "description": "评测基线及发布门禁，数值阈值不写入 Prompt。",
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/EvaluationCaseV1"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Cases",
+      "type": "array"
+    },
+    "checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Checksum",
+      "type": "string"
+    },
+    "evaluation_set_id": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Evaluation Set Id",
+      "type": "string"
+    },
+    "min_citation_coverage": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Min Citation Coverage",
+      "type": "number"
+    },
+    "min_mrr": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Min Mrr",
+      "type": "number"
+    },
+    "min_recall": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Min Recall",
+      "type": "number"
+    },
+    "recall_at_k": {
+      "default": 5,
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Recall At K",
+      "type": "integer"
+    },
+    "revision": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+      "title": "Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/evaluation-set/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "evaluation_set_id",
+    "revision",
+    "checksum",
+    "min_recall",
+    "min_mrr",
+    "min_citation_coverage",
+    "cases"
+  ],
+  "title": "EvaluationSetV1",
+  "type": "object"
+}

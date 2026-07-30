@@ -1,0 +1,147 @@
+{
+  "$defs": {
+    "ParsedBlockV1": {
+      "additionalProperties": false,
+      "description": "解析器输出的最小稳定文本单元。",
+      "properties": {
+        "block_id": {
+          "pattern": "^block_[a-f0-9]{16,64}$",
+          "title": "Block Id",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 200000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "locator": {
+          "$ref": "#/$defs/SourceLocatorV1"
+        },
+        "ordinal": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "block_id",
+        "ordinal",
+        "content",
+        "locator"
+      ],
+      "title": "ParsedBlockV1",
+      "type": "object"
+    },
+    "SourceLocatorV1": {
+      "additionalProperties": false,
+      "description": "一个解析 block 可回溯到的源文件定位信息。\n\n``kind`` 表示定位单位，``start``/``end`` 均为从 1 开始的闭区间；其值不会被\n用作本地文件系统路径，只用于 citation 展示和可审计回溯。",
+      "properties": {
+        "end": {
+          "maximum": 10000000,
+          "minimum": 1,
+          "title": "End",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "line",
+            "page",
+            "paragraph"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source_path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Source Path",
+          "type": "string"
+        },
+        "start": {
+          "maximum": 10000000,
+          "minimum": 1,
+          "title": "Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source_path",
+        "kind",
+        "start",
+        "end"
+      ],
+      "title": "SourceLocatorV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/parsed-document-v1.schema.json",
+  "additionalProperties": false,
+  "description": "PDF、DOCX、Markdown 与 TXT 统一的解析中间表示。\n\n原文件路径不进入该契约；``source_path`` 是相对于受控导入根的展示路径，\n``source_checksum`` 将解析结果精确绑定到输入字节。",
+  "properties": {
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/ParsedBlockV1"
+      },
+      "maxItems": 100000,
+      "minItems": 1,
+      "title": "Blocks",
+      "type": "array"
+    },
+    "document_id": {
+      "pattern": "^doc_[a-f0-9]{16,64}$",
+      "title": "Document Id",
+      "type": "string"
+    },
+    "knowledge_id": {
+      "pattern": "^kb[._][a-z0-9][a-z0-9_.-]{1,126}$",
+      "title": "Knowledge Id",
+      "type": "string"
+    },
+    "knowledge_version_id": {
+      "pattern": "^kv_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Knowledge Version Id",
+      "type": "string"
+    },
+    "parser_profile": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Parser Profile",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/parsed-document/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Source Checksum",
+      "type": "string"
+    },
+    "source_file_id": {
+      "pattern": "^file_[a-f0-9]{16,64}$",
+      "title": "Source File Id",
+      "type": "string"
+    },
+    "source_path": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Source Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "knowledge_id",
+    "knowledge_version_id",
+    "document_id",
+    "source_file_id",
+    "source_path",
+    "source_checksum",
+    "parser_profile",
+    "blocks"
+  ],
+  "title": "ParsedDocumentV1",
+  "type": "object"
+}

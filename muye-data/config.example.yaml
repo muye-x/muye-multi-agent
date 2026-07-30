@@ -7,14 +7,6 @@ connections:
     token_env: MUYE_DATA_MILVUS_TOKEN
     database: default
 
-  opensearch_default:
-    type: opensearch
-    hosts:
-      - http://127.0.0.1:9200
-    username_env: MUYE_DATA_OPENSEARCH_USERNAME
-    password_env: MUYE_DATA_OPENSEARCH_PASSWORD
-    verify_certs: true
-
 resources:
   product_knowledge:
     connection: milvus_default

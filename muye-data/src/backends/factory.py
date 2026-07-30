@@ -6,11 +6,9 @@ from collections.abc import Mapping
 
 from src.backends.base import RetrievalBackend
 from src.backends.milvus import MilvusBackend
-from src.backends.opensearch import OpenSearchBackend
 from src.config import (
     DataConfig,
     MilvusConnectionConfig,
-    OpenSearchConnectionConfig,
     require_environment_value,
 )
 
@@ -37,24 +35,6 @@ def build_backends(
                 token=token,
                 database=connection.database,
             )
-        elif isinstance(connection, OpenSearchConnectionConfig):
-            username = (
-                require_environment_value(connection.username_env, environ)
-                if connection.username_env
-                else None
-            )
-            password = (
-                require_environment_value(connection.password_env, environ)
-                if connection.password_env
-                else None
-            )
-            backends[name] = OpenSearchBackend(
-                hosts=connection.hosts,
-                username=username,
-                password=password,
-                verify_certs=connection.verify_certs,
-                ca_certs=connection.ca_certs,
-            )
-        else:  # pragma: no cover - Pydantic discriminator makes this unreachable.
+        else:  # pragma: no cover - DataConfig 只允许 Milvus。
             raise TypeError(f"不支持的 connection 类型：{type(connection).__name__}")
     return backends
