@@ -21,6 +21,8 @@ export interface ResourceBindingV1 {
 export interface AgentRuntimeV1 {
   internal_port: number;
   timeout_seconds: number;
+  token_budget: number;
+  tool_budget: number;
   max_concurrency: number;
   memory_limit: string;
 }

@@ -25,3 +25,21 @@ def test_generated_agent_declares_deployment_identity(monkeypatch) -> None:
         ),
         required_features={"cancel", "citation_blocks", "sse", "trusted_deadline"},
     )
+
+
+def test_generated_agent_applies_descriptor_model_and_budgets(monkeypatch) -> None:
+    """模型 alias、输出 token、总超时和每次请求工具上限均来自 agent.yaml。"""
+    monkeypatch.setenv("MUYE_AGENT_SERVICE_ID", "generated-service")
+    monkeypatch.setenv("MUYE_AGENT_DEPLOYMENT_ID", "generated-deployment")
+    monkeypatch.setenv("MUYE_AGENT_DESCRIPTOR_CHECKSUM", "a" * 64)
+    monkeypatch.setenv("MUYE_AGENT_SOURCE_TREE_CHECKSUM", "b" * 64)
+    monkeypatch.setenv("MUYE_SDK_MODEL", "environment-must-not-override-descriptor")
+    monkeypatch.setenv("MUYE_SDK_MODEL_MAX_TOKENS", "1")
+    monkeypatch.setenv("MUYE_SDK_REQUEST_TIMEOUT_SECONDS", "1")
+
+    agent = {{ class_name }}()
+
+    assert agent.config.model.model == {{ model_alias }}
+    assert agent.config.model.max_tokens == {{ token_budget }}
+    assert agent.config.request_timeout_seconds == {{ timeout_budget_seconds }}
+    assert agent._tool_limiter().run_limit == {{ tool_budget }}

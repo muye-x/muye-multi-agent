@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
+from langchain.agents import create_agent
+from langchain.agents.middleware import ToolCallLimitMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from muye_multi_agent_sdk import AgentIdentity, AgentMetadata, ReActAgent, load_yaml_config
+from muye_multi_agent_sdk import AgentConfig, AgentIdentity, AgentMetadata, ReActAgent, load_yaml_config
 from muye_multi_agent_sdk.integrations.muye_data import DataAccessContext
+from muye_multi_agent_sdk.runtime import ExecutionOptions
 from muye_multi_agent_sdk.tools import create_scoped_data_retrieval_tool
 
 
@@ -21,14 +25,16 @@ class _ResourceBinding(BaseModel):
 
 
 class _Runtime(BaseModel):
-    """agent.yaml 中由部署生成器消费的运行预算。"""
+    """agent.yaml 中由运行时和部署生成器共同消费的固定预算。"""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    internal_port: int
-    timeout_seconds: int
-    max_concurrency: int
-    memory_limit: str
+    internal_port: int = Field(ge=1, le=65535)
+    timeout_seconds: int = Field(ge=1, le=300)
+    token_budget: int = Field(ge=128, le=65536)
+    tool_budget: int = Field(ge=1, le=20)
+    max_concurrency: int = Field(ge=1, le=128)
+    memory_limit: str = Field(pattern=r"^[1-9][0-9]{0,3}[mMgG]$")
 
 
 class _Deployment(BaseModel):
@@ -76,8 +82,47 @@ class {{ class_name }}(ReActAgent):
     """只调用固定逻辑资源和固定 scope 的内部知识 Agent。"""
 
     def __init__(self) -> None:
-        super().__init__()
-        self._descriptor = load_yaml_config(Path(__file__).with_name("agent.yaml"), _AgentDescriptor)
+        descriptor = load_yaml_config(Path(__file__).with_name("agent.yaml"), _AgentDescriptor)
+        super().__init__(self._sdk_config(descriptor))
+        self._descriptor = descriptor
+
+    @staticmethod
+    def _sdk_config(descriptor: _AgentDescriptor) -> AgentConfig:
+        """保留部署连接配置，但以 descriptor 覆盖模型、输出 token 与总请求预算。"""
+        environment_config = AgentConfig.from_env(env_file=Path(__file__).with_name(".env"))
+        model_config = environment_config.model.model_copy(
+            update={
+                "model": descriptor.model_alias,
+                "max_tokens": descriptor.runtime.token_budget,
+            }
+        )
+        return environment_config.model_copy(
+            update={
+                "model": model_config,
+                "request_timeout_seconds": descriptor.runtime.timeout_seconds,
+            }
+        )
+
+    def _tool_limiter(self) -> ToolCallLimitMiddleware:
+        """限制单次请求的实际工具执行次数，不让模型通过重复调用扩大检索范围。"""
+        return ToolCallLimitMiddleware(run_limit=self._descriptor.runtime.tool_budget, exit_behavior="continue")
+
+    async def _agent(self, options: ExecutionOptions) -> Any:
+        """构造带逐请求工具预算的 ReAct graph；其余 SDK 生命周期保持不变。"""
+        stateful = options.context_enabled and options.profile in self.config.context.enabled_profiles
+        if stateful in self._agents:
+            return self._agents[stateful]
+        kwargs: dict[str, Any] = {
+            "model": self._get_model(),
+            "tools": self.langchain_tools,
+            "system_prompt": self.instructions,
+            "middleware": [self._tool_limiter()],
+        }
+        checkpointer = await self.checkpointer(options)
+        if checkpointer is not None:
+            kwargs["checkpointer"] = checkpointer
+        self._agents[stateful] = create_agent(**kwargs)
+        return self._agents[stateful]
 
     @property
     def metadata(self) -> AgentMetadata:

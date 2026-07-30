@@ -87,6 +87,8 @@ def test_poc_generator_creates_valid_agent_and_never_overwrites_developer_change
 
     assert descriptor.deployment.enabled is False
     assert descriptor.resources[0].resource_id == "kb.product_handbook"
+    assert descriptor.runtime.token_budget == spec.token_budget
+    assert descriptor.runtime.tool_budget == spec.tool_budget
     assert provenance.generation_spec_checksum == spec.input_checksum
     assert generated_agent.metadata.name == "product-handbook"
 

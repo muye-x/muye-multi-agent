@@ -15,7 +15,9 @@ resources:
     skill_ref: {{ skill_ref }}
 runtime:
   internal_port: 8000
-  timeout_seconds: 30
+  timeout_seconds: {{ timeout_budget_seconds }}
+  token_budget: {{ token_budget }}
+  tool_budget: {{ tool_budget }}
   max_concurrency: 2
   memory_limit: 512m
 deployment:

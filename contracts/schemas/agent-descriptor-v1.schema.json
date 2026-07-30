@@ -17,7 +17,7 @@
     },
     "AgentRuntimeV1": {
       "additionalProperties": false,
-      "description": "SubAgent 运行时预算；数值上限避免描述符被用作资源放大入口。",
+      "description": "SubAgent 运行与模型预算；所有字段由部署前的 descriptor 显式固定。\n\n`timeout_seconds` 限制单个请求的完整生命周期，`token_budget` 限制单次模型输出，\n`tool_budget` 限制一次 ReAct 请求中实际执行的工具调用数。并发和内存字段由后续\n部署生成器消费，不能由模型请求覆盖。",
       "properties": {
         "internal_port": {
           "maximum": 65535,
@@ -41,11 +41,25 @@
           "minimum": 1,
           "title": "Timeout Seconds",
           "type": "integer"
+        },
+        "token_budget": {
+          "maximum": 65536,
+          "minimum": 128,
+          "title": "Token Budget",
+          "type": "integer"
+        },
+        "tool_budget": {
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Tool Budget",
+          "type": "integer"
         }
       },
       "required": [
         "internal_port",
         "timeout_seconds",
+        "token_budget",
+        "tool_budget",
         "max_concurrency",
         "memory_limit"
       ],

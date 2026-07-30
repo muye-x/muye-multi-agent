@@ -25,9 +25,13 @@ def test_react_knowledge_template_declares_a_pinned_sdk_and_digest_only_base_ima
     }
     assert (TEMPLATE_DIRECTORY / "requirements.txt.tmpl").read_text(encoding="utf-8") == (
         "muye-multi-agent-sdk @ https://github.com/muye-x/muye-multi-agent-sdk/archive/refs/tags/v2.0.0.tar.gz\n"
+        "langchain==1.3.14\n"
     )
     assert dockerfile.startswith("ARG MUYE_AGENT_BASE_IMAGE\nFROM ${MUYE_AGENT_BASE_IMAGE}\n")
     assert "USER 10001" in dockerfile
+    dockerignore = (TEMPLATE_DIRECTORY / ".dockerignore").read_text(encoding="utf-8")
+    for ignored_pattern in (".env*", ".git/", "*.pem", "*.key", "__pycache__/"):
+        assert ignored_pattern in dockerignore
 
 
 def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime_identity() -> None:
@@ -46,6 +50,10 @@ def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime
     assert "scaffold" not in source.lower()
     assert "load_yaml_config" in source
     assert "Path(__file__).with_name(\"agent.yaml\")" in source
+    assert "AgentConfig.from_env" in source
+    assert "ToolCallLimitMiddleware" in source
+    assert "token_budget" in source
+    assert "tool_budget" in source
     assert (TEMPLATE_DIRECTORY / "README.md.tmpl").is_file()
     assert (TEMPLATE_DIRECTORY / "tests" / "test_contract.py.tmpl").is_file()
 
@@ -62,4 +70,5 @@ def test_fixture_agent_has_no_scaffold_import_and_keeps_a_fixed_scope() -> None:
     assert descriptor["agent_id"] == "agent_fixture_knowledge"
     assert (FIXTURE_DIRECTORY / "requirements.txt").read_text(encoding="utf-8") == (
         "muye-multi-agent-sdk @ https://github.com/muye-x/muye-multi-agent-sdk/archive/refs/tags/v2.0.0.tar.gz\n"
+        "langchain==1.3.14\n"
     )

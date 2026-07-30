@@ -78,10 +78,17 @@ class ResourceBindingV1(ContractModel):
 
 
 class AgentRuntimeV1(ContractModel):
-    """SubAgent 运行时预算；数值上限避免描述符被用作资源放大入口。"""
+    """SubAgent 运行与模型预算；所有字段由部署前的 descriptor 显式固定。
+
+    `timeout_seconds` 限制单个请求的完整生命周期，`token_budget` 限制单次模型输出，
+    `tool_budget` 限制一次 ReAct 请求中实际执行的工具调用数。并发和内存字段由后续
+    部署生成器消费，不能由模型请求覆盖。
+    """
 
     internal_port: int = Field(ge=1, le=65535)
     timeout_seconds: int = Field(ge=1, le=300)
+    token_budget: int = Field(ge=128, le=65536)
+    tool_budget: int = Field(ge=1, le=20)
     max_concurrency: int = Field(ge=1, le=128)
     memory_limit: str = Field(pattern=r"^[1-9][0-9]{0,3}[mMgG]$")
 

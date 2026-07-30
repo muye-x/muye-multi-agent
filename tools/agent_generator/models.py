@@ -7,6 +7,7 @@ Collection、网络地址、凭据或可执行表达式字段，以保持生成�
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -19,6 +20,7 @@ from contracts.models import (
     SEMVER_PATTERN,
     SHA256_PATTERN,
     SLUG_PATTERN,
+    TIMESTAMP_PATTERN,
     AgentGenerationSpecV1,
     ContractModel,
 )
@@ -29,6 +31,31 @@ from .checksums import canonical_checksum
 _UNSAFE_CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _EXECUTABLE_PROPOSAL_LINE = re.compile(
     r"(?im)^\s*(?:from\s+\S+\s+import\s+|import\s+|def\s+|class\s+|exec\s*\(|eval\s*\(|__import__\s*\()"
+)
+_PROFILE_FORBIDDEN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?i)(?:https?|ftp)://|www\."), "URL"),
+    (
+        re.compile(
+            r"(?:~[\\/]|(?:[A-Za-z]:)?[\\/][^\s\\/]+|\.{1,2}[\\/]|"
+            r"(?:[A-Za-z0-9_.-]+[\\/])+(?:[A-Za-z0-9_.-]+))"
+        ),
+        "文件路径",
+    ),
+    (
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9_])(?:curl|wget|bash|zsh|fish|powershell|cmd|kubectl|docker(?:file)?)(?![A-Za-z0-9_])|"
+            r"(?<![A-Za-z0-9_])(?:pip|npm|yarn|apt(?:-get)?|brew)\s+(?:install|add)(?![A-Za-z0-9_])"
+        ),
+        "Shell、Docker 或依赖命令",
+    ),
+    (re.compile(r"(?i)(?:requirements?\.txt|pyproject\.toml)"), "依赖文件"),
+    (
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9_])(?:api[_-]?key|access[_-]?token|secret|password|passwd|private[_-]?key)"
+            r"(?![A-Za-z0-9_])\s*[:=]"
+        ),
+        "凭据形态",
+    ),
 )
 
 
@@ -44,6 +71,15 @@ def _validate_human_text(value: str, field_name: str, *, max_length: int) -> str
         raise ValueError(f"{field_name} 不能包含代码围栏或模板语法")
     if _EXECUTABLE_PROPOSAL_LINE.search(value):
         raise ValueError(f"{field_name} 不能包含可执行 Python")
+    return value
+
+
+def _validate_profile_text(value: str, field_name: str, *, max_length: int) -> str:
+    """将不可信 Proposal 限制为纯说明文本，拒绝路径、命令和凭据通道。"""
+    value = _validate_human_text(value, field_name, max_length=max_length)
+    for pattern, label in _PROFILE_FORBIDDEN_PATTERNS:
+        if pattern.search(value):
+            raise ValueError(f"{field_name} 不能包含{label}")
     return value
 
 
@@ -78,14 +114,14 @@ class AgentProfileProposalV1(ContractModel):
         """Profile 文字仅能成为字面量 Prompt 或描述，不能成为源代码。"""
         field_name = getattr(info, "field_name", "profile field")
         limits = {"display_name": 128, "description": 1000, "instructions": 8000}
-        return _validate_human_text(value, field_name, max_length=limits[field_name])
+        return _validate_profile_text(value, field_name, max_length=limits[field_name])
 
     @field_validator("supported_intents", "do_not_use_when", "examples")
     @classmethod
     def validate_profile_lists(cls, values: list[str], info: object) -> list[str]:
         """限制列表项长度和重复项，避免 Profile 形成无界模型上下文。"""
         field_name = getattr(info, "field_name", "profile list")
-        normalized = [_validate_human_text(value, field_name, max_length=512).strip() for value in values]
+        normalized = [_validate_profile_text(value, field_name, max_length=512).strip() for value in values]
         if len(set(normalized)) != len(normalized):
             raise ValueError(f"{field_name} 不能重复")
         return normalized
@@ -100,6 +136,44 @@ class AgentProfileInputV1(ContractModel):
     agent_version: str = Field(pattern=SEMVER_PATTERN)
     profile_revision: str = Field(pattern=SAFE_REFERENCE_PATTERN)
     profile: AgentProfileProposalV1
+
+
+class GenerationApprovalV1(ContractModel):
+    """可提交的人工确认记录，绑定单个 Generator 输入版本。
+
+    每条记录只能确认 Resource、Skill 或 Profile 中的一项。Generator 在写入 staging
+    目录前读取该记录并复核 slug、revision 和 checksum，避免确认旧 Diff 后使用新输入。
+    """
+
+    schema_version: Literal["muye.ai/generation-approval/v1"]
+    subject_type: Literal["resource", "skill", "profile"]
+    subject_slug: str = Field(min_length=1, max_length=63, pattern=SLUG_PATTERN)
+    revision: str = Field(min_length=1, max_length=256, pattern=SAFE_REFERENCE_PATTERN)
+    checksum: str = Field(pattern=SHA256_PATTERN)
+    approved_at: str = Field(pattern=TIMESTAMP_PATTERN)
+    approved_by: str = Field(pattern=IDENTIFIER_PATTERN)
+
+    @field_validator("revision")
+    @classmethod
+    def validate_revision(cls, value: str) -> str:
+        """审批记录只能引用可提交的逻辑 revision，不能成为路径或 URL 通道。"""
+        if value.startswith("/") or "://" in value or "\\" in value:
+            raise ValueError("approval revision 必须是安全的逻辑引用")
+        if any(part in {"", ".", ".."} for part in value.split("/")):
+            raise ValueError("approval revision 不能包含路径遍历片段")
+        return value
+
+    @field_validator("approved_at")
+    @classmethod
+    def validate_approved_at(cls, value: str) -> str:
+        """审批时间必须是可审计的带时区 RFC 3339 值。"""
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("approved_at 必须是有效的 RFC 3339 时间") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("approved_at 必须包含时区")
+        return value
 
 
 class KnowledgeGenerationInputV1(ContractModel):

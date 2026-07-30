@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import tempfile
 from typing import TypeVar
 
 from pydantic import ValidationError
@@ -89,6 +90,24 @@ def load_json_model(path: Path, model_type: type[ModelT]) -> ModelT:
 def write_json(path: Path, value: object) -> None:
     """以稳定、可审阅的 JSON 格式写入已在 staging 目录内的生成文件。"""
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_json_atomic(path: Path, value: object) -> None:
+    """在已有受控目录内原子替换 JSON 文件，避免留下半写入的审批记录。"""
+    if path.is_symlink():
+        raise ValueError(f"不允许写入符号链接：{path}")
+    if not path.parent.is_dir() or path.parent.is_symlink():
+        raise ValueError(f"JSON 父目录不存在、不是目录或是符号链接：{path.parent}")
+    content = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+        os.replace(temporary_path, path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def assert_path_within(path: Path, root: Path, *, description: str) -> Path:

@@ -8,6 +8,21 @@
     "error_field": "api_profile"
   },
   {
+    "name": "descriptor rejects tool budget above generation limit",
+    "model": "agent-descriptor-v1",
+    "patch": {
+      "runtime": {
+        "internal_port": 8000,
+        "timeout_seconds": 30,
+        "token_budget": 8192,
+        "tool_budget": 21,
+        "max_concurrency": 8,
+        "memory_limit": "1g"
+      }
+    },
+    "error_field": "runtime"
+  },
+  {
     "name": "generation spec rejects unknown network input",
     "model": "agent-generation-spec-v1",
     "patch": {

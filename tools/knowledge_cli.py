@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-from typing import Sequence
+from typing import Literal, Sequence
 
+from .agent_generator.approvals import ApprovalSubjectType, write_approval
 from .agent_generator.io import assert_path_within, load_yaml_model
-from .agent_generator.models import KnowledgeGenerationInputV1
+from .agent_generator.models import GenerationApprovalV1, KnowledgeGenerationInputV1
 
 
 def add_knowledge_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -23,10 +25,12 @@ def add_knowledge_parser(subparsers: argparse._SubParsersAction[argparse.Argumen
     approve_schema = commands.add_parser("approve-schema", help="确认当前 Resource checksum")
     approve_schema.add_argument("slug", help="知识配置 slug")
     approve_schema.add_argument("--checksum", required=True, help="审阅后确认的 Resource checksum")
+    approve_schema.add_argument("--approved-by", required=True, help="确认人的稳定逻辑标识")
 
     approve_skill = commands.add_parser("approve-skill", help="确认当前 Retrieval Skill checksum")
     approve_skill.add_argument("slug", help="知识配置 slug")
     approve_skill.add_argument("--checksum", required=True, help="审阅后确认的 Skill checksum")
+    approve_skill.add_argument("--approved-by", required=True, help="确认人的稳定逻辑标识")
 
     for command_name, help_text in (
         ("build", "阶段 4 负责提交知识构建 Job"),
@@ -52,17 +56,23 @@ def run_knowledge_command(arguments: argparse.Namespace, workspace_root: Path) -
         )
         return 0
     if arguments.knowledge_command == "approve-schema":
-        return _confirm_checksum(
+        return _confirm_knowledge_input(
+            workspace_root,
             arguments.checksum,
-            knowledge.resource_checksum,
-            label="Resource",
+            approved_by=arguments.approved_by,
+            subject_type="resource",
+            expected_checksum=knowledge.resource_checksum,
+            revision=knowledge.resource_revision,
             knowledge_slug=knowledge.knowledge_slug,
         )
     if arguments.knowledge_command == "approve-skill":
-        return _confirm_checksum(
+        return _confirm_knowledge_input(
+            workspace_root,
             arguments.checksum,
-            knowledge.skill_checksum,
-            label="Retrieval Skill",
+            approved_by=arguments.approved_by,
+            subject_type="skill",
+            expected_checksum=knowledge.skill_checksum,
+            revision=knowledge.skill_revision,
             knowledge_slug=knowledge.knowledge_slug,
         )
     if arguments.knowledge_command in {"build", "evaluate"}:
@@ -87,11 +97,37 @@ def _load_knowledge_input(workspace_root: Path, slug: str) -> KnowledgeGeneratio
     return knowledge
 
 
-def _confirm_checksum(submitted: str, expected: str, *, label: str, knowledge_slug: str) -> int:
-    """确认命令必须精确匹配当前版本 checksum，避免旧审阅确认新输入。"""
-    if submitted != expected:
-        raise ValueError(f"{label} checksum 不匹配，拒绝确认当前知识输入")
-    _print_json({"knowledge_slug": knowledge_slug, "status": "checksum-confirmed", "type": label})
+def _confirm_knowledge_input(
+    workspace_root: Path,
+    submitted_checksum: str,
+    *,
+    approved_by: str,
+    subject_type: ApprovalSubjectType,
+    expected_checksum: str,
+    revision: str,
+    knowledge_slug: str,
+) -> int:
+    """写入精确绑定 revision/checksum 的确认记录，供 Generator 在生成前复核。"""
+    if submitted_checksum != expected_checksum:
+        raise ValueError(f"{subject_type} checksum 不匹配，拒绝确认当前知识输入")
+    approval = GenerationApprovalV1(
+        schema_version="muye.ai/generation-approval/v1",
+        subject_type=subject_type,
+        subject_slug=knowledge_slug,
+        revision=revision,
+        checksum=expected_checksum,
+        approved_at=datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        approved_by=approved_by,
+    )
+    path = write_approval(workspace_root / "config", approval)
+    _print_json(
+        {
+            "approval": path.relative_to(workspace_root).as_posix(),
+            "knowledge_slug": knowledge_slug,
+            "status": "checksum-confirmed",
+            "type": subject_type,
+        }
+    )
     return 0
 
 

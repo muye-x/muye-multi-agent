@@ -19,6 +19,7 @@ import tempfile
 
 from contracts.models import AgentDescriptorV1, AgentGenerationSpecV1, SourceProvenanceV1
 
+from .approvals import assert_approval
 from .checksums import PROVENANCE_FILE_NAME, canonical_checksum, read_source_tree, source_tree_checksum
 from .io import assert_path_within, load_json_model, load_yaml_model, target_exists, write_json
 from .models import (
@@ -34,6 +35,7 @@ RECIPE_FILE_NAME = ".muye-generation-input.json"
 _TEMPLATE_MANIFEST_FILE = "template-manifest.yaml"
 _PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
 _RENDERED_FILES: dict[str, str] = {
+    ".dockerignore": ".dockerignore",
     "Dockerfile": "Dockerfile",
     "README.md.tmpl": "README.md",
     "agent.py.tmpl": "agent.py",
@@ -134,7 +136,7 @@ class AgentGenerator:
             self._write_rendered_files(staging, rendered)
             write_json(staging / RECIPE_FILE_NAME, recipe.model_dump(mode="json"))
             descriptor = self._load_descriptor(staging / "agent.yaml")
-            self._assert_descriptor_matches_recipe(descriptor, recipe)
+            self._assert_rendered_descriptor_matches_recipe(descriptor, recipe)
             self._compile_and_import_generated_agent(staging, descriptor, recipe)
             provenance = self._build_provenance(staging=staging, recipe=recipe, knowledge=knowledge)
             write_json(staging / PROVENANCE_FILE_NAME, provenance.model_dump(mode="json"))
@@ -155,11 +157,13 @@ class AgentGenerator:
         provenance = self._load_provenance(directory / PROVENANCE_FILE_NAME)
         self._assert_descriptor_matches_provenance(descriptor, provenance)
         recipe = load_json_model(directory / RECIPE_FILE_NAME, GenerationRecipeV1)
-        self._assert_descriptor_matches_recipe(descriptor, recipe)
-        if provenance.generation_spec_checksum != recipe.generation_spec.input_checksum:
-            raise ValueError("provenance generation_spec_checksum 与 generation recipe 不一致")
+        self._assert_stable_descriptor_fields(descriptor, recipe)
+        self._assert_provenance_matches_recipe(provenance, recipe)
+        expected_generated_files = self._expected_generated_files()
+        if set(provenance.generated_files) != expected_generated_files:
+            raise ValueError("provenance generated_files 与 Generator 固定产物清单不一致")
         actual_files = set(read_source_tree(directory)) | {PROVENANCE_FILE_NAME}
-        missing = tuple(sorted(set(provenance.generated_files) - actual_files))
+        missing = tuple(sorted(expected_generated_files - actual_files))
         for source_file in (directory / "agent.py", directory / "main.py"):
             if source_file.exists():
                 compile(source_file.read_text(encoding="utf-8"), str(source_file), "exec")
@@ -210,6 +214,7 @@ class AgentGenerator:
             raise ValueError("Agent 配置中的 slug 必须与命令参数一致")
         if knowledge.knowledge_slug != knowledge_slug:
             raise ValueError("知识配置中的 knowledge_slug 必须与命令参数一致")
+        self._assert_generation_approvals(profile_input=profile_input, knowledge=knowledge)
         manifest, template_directory = self._resolve_template("react-knowledge", template_version=None)
         spec = self._assemble_generation_spec(profile_input=profile_input, knowledge=knowledge, manifest=manifest)
         recipe = GenerationRecipeV1(
@@ -369,8 +374,11 @@ class AgentGenerator:
             "slug": _json_literal(spec.slug),
             "slug_markdown": spec.slug,
             "supported_intents_json": _json_literal(profile.supported_intents),
+            "timeout_budget_seconds": str(spec.timeout_budget_seconds),
             "tool_name": tool_name,
             "tool_name_retrieve_json": _json_literal(f"{tool_name}_retrieve"),
+            "token_budget": str(spec.token_budget),
+            "tool_budget": str(spec.tool_budget),
         }
         return values
 
@@ -390,7 +398,7 @@ class AgentGenerator:
         knowledge: KnowledgeGenerationInputV1,
     ) -> SourceProvenanceV1:
         """在源码树完整后记录可审计来源；时间不参与 stable tree checksum。"""
-        generated_files = sorted(set(read_source_tree(staging)) | {PROVENANCE_FILE_NAME})
+        generated_files = sorted(self._expected_generated_files())
         generated_at = self._clock().astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         return SourceProvenanceV1(
             schema_version="muye.ai/source-provenance/v1",
@@ -410,7 +418,7 @@ class AgentGenerator:
     def _assert_staging_integrity(self, staging: Path, provenance: SourceProvenanceV1) -> None:
         """写入 provenance 后再次自校验，确保发布前不会留下不完整基线。"""
         actual_files = set(read_source_tree(staging)) | {PROVENANCE_FILE_NAME}
-        if actual_files != set(provenance.generated_files):
+        if actual_files != self._expected_generated_files() or actual_files != set(provenance.generated_files):
             raise ValueError("staging 生成文件清单与 provenance 不一致")
         if source_tree_checksum(staging) != provenance.generated_source_tree_checksum:
             raise ValueError("staging 源码树 checksum 与 provenance 不一致")
@@ -475,7 +483,7 @@ class AgentGenerator:
         """从生成目录读取严格 provenance。"""
         return load_json_model(path, SourceProvenanceV1)
 
-    def _assert_descriptor_matches_recipe(self, descriptor: AgentDescriptorV1, recipe: GenerationRecipeV1) -> None:
+    def _assert_rendered_descriptor_matches_recipe(self, descriptor: AgentDescriptorV1, recipe: GenerationRecipeV1) -> None:
         """检查模板渲染后的 descriptor 仍完整反映已确认的身份与资源。"""
         spec = recipe.generation_spec
         profile = recipe.profile_input
@@ -514,6 +522,74 @@ class AgentGenerator:
             raise ValueError("agent.yaml template_id 与 provenance 不一致")
         if descriptor.source.template_version != provenance.template_version:
             raise ValueError("agent.yaml template_version 与 provenance 不一致")
+
+    def _assert_stable_descriptor_fields(self, descriptor: AgentDescriptorV1, recipe: GenerationRecipeV1) -> None:
+        """只冻结 Agent 身份和首次模板来源，允许开发者接管可演进 descriptor 字段。"""
+        spec = recipe.generation_spec
+        expected_tool_name = _tool_name_for_slug(spec.slug)
+        mismatches = [
+            field_name
+            for field_name, actual, expected in (
+                ("agent_id", descriptor.agent_id, spec.agent_id),
+                ("slug", descriptor.slug, spec.slug),
+                ("tool_name", descriptor.tool_name, expected_tool_name),
+            )
+            if actual != expected
+        ]
+        if mismatches:
+            raise ValueError("agent.yaml 修改了不可变身份字段：" + ", ".join(mismatches))
+
+    def _assert_provenance_matches_recipe(self, provenance: SourceProvenanceV1, recipe: GenerationRecipeV1) -> None:
+        """逐项复核 provenance 的可重放来源，防止格式合法的审计字段被替换。"""
+        spec = recipe.generation_spec
+        knowledge = recipe.knowledge
+        expected = (
+            ("template_id", provenance.template_id, spec.template_id),
+            ("template_version", provenance.template_version, spec.template_version),
+            ("sdk_version", provenance.sdk_version, spec.sdk_version),
+            ("generation_spec_checksum", provenance.generation_spec_checksum, spec.input_checksum),
+            ("knowledge_resource_checksum", provenance.knowledge_resource_checksum, knowledge.resource_checksum),
+            ("skill_checksum", provenance.skill_checksum, spec.skill_checksum),
+            ("profile_checksum", provenance.profile_checksum, spec.agent_profile_checksum),
+        )
+        mismatches = [field_name for field_name, actual, expected_value in expected if actual != expected_value]
+        if mismatches:
+            raise ValueError("provenance 与 generation recipe 不一致：" + ", ".join(mismatches))
+
+    def _assert_generation_approvals(
+        self,
+        *,
+        profile_input: AgentProfileInputV1,
+        knowledge: KnowledgeGenerationInputV1,
+    ) -> None:
+        """在写 staging 前要求 Resource、Skill、Profile 都有当前版本的人工确认。"""
+        config_root = self._paths.config_root
+        assert_approval(
+            config_root,
+            subject_type="resource",
+            slug=knowledge.knowledge_slug,
+            revision=knowledge.resource_revision,
+            checksum=knowledge.resource_checksum,
+        )
+        assert_approval(
+            config_root,
+            subject_type="skill",
+            slug=knowledge.knowledge_slug,
+            revision=knowledge.skill_revision,
+            checksum=knowledge.skill_checksum,
+        )
+        assert_approval(
+            config_root,
+            subject_type="profile",
+            slug=profile_input.slug,
+            revision=profile_input.profile_revision,
+            checksum=canonical_checksum(profile_input.profile.model_dump(mode="json")),
+        )
+
+    @staticmethod
+    def _expected_generated_files() -> set[str]:
+        """返回当前 Generator 固定输出的完整基线集合，开发者新增文件不属于该集合。"""
+        return set(_RENDERED_FILES.values()) | {RECIPE_FILE_NAME, PROVENANCE_FILE_NAME}
 
     def _compile_and_import_generated_agent(
         self,
@@ -635,16 +711,22 @@ def _unified_tree_diff(actual_tree: dict[str, str], expected_tree: dict[str, str
     return "".join(lines)
 
 
-def _semver_sort_key(value: str) -> tuple[int, int, int, int, tuple[str, ...]]:
-    """为本地模板选择提供足够的 SemVer 顺序，无需引入额外运行时依赖。"""
+def _semver_sort_key(value: str) -> tuple[int, int, int, int, tuple[tuple[int, int | str], ...]]:
+    """按 SemVer 2.0.0 选择最新模板，正确处理数字 prerelease 标识和 build metadata。"""
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?", value)
     if match is None:
         raise ValueError(f"无法排序非 SemVer 模板版本：{value}")
     prerelease = match.group(4)
+    prerelease_identifiers = ()
+    if prerelease:
+        prerelease_identifiers = tuple(
+            (0, int(identifier)) if identifier.isdigit() else (1, identifier)
+            for identifier in prerelease.split(".")
+        )
     return (
         int(match.group(1)),
         int(match.group(2)),
         int(match.group(3)),
         1 if prerelease is None else 0,
-        tuple(prerelease.split(".")) if prerelease else (),
+        prerelease_identifiers,
     )

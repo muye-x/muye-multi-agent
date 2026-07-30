@@ -122,7 +122,14 @@ def _write_agent_files(
         protocol_version="muye-agent-internal/3.0",
         model_alias=generation_spec.model_alias,
         resources=[{"resource_id": config.resource_id, "skill_ref": generation_spec.skill_revision}],
-        runtime={"internal_port": 8000, "timeout_seconds": 30, "max_concurrency": 2, "memory_limit": "512m"},
+        runtime={
+            "internal_port": 8000,
+            "timeout_seconds": generation_spec.timeout_budget_seconds,
+            "token_budget": generation_spec.token_budget,
+            "tool_budget": generation_spec.tool_budget,
+            "max_concurrency": 2,
+            "memory_limit": "512m",
+        },
         deployment={"enabled": False},
         source={
             "template_id": generation_spec.template_id,

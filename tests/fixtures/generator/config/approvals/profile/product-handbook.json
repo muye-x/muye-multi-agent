@@ -1,0 +1,9 @@
+{
+  "approved_at": "2026-07-30T01:00:00Z",
+  "approved_by": "test_reviewer",
+  "checksum": "135e4d59a18f18e00c80e5ae76957dbafd31caa291f14794b747b0dcd33b6679",
+  "revision": "profile/product-handbook@1",
+  "schema_version": "muye.ai/generation-approval/v1",
+  "subject_slug": "product-handbook",
+  "subject_type": "profile"
+}

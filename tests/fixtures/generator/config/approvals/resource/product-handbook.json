@@ -1,0 +1,9 @@
+{
+  "approved_at": "2026-07-30T01:00:00Z",
+  "approved_by": "test_reviewer",
+  "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "revision": "resource/product-handbook@1",
+  "schema_version": "muye.ai/generation-approval/v1",
+  "subject_slug": "product-handbook",
+  "subject_type": "resource"
+}

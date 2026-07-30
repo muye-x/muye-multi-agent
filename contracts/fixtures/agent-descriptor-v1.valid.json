@@ -23,6 +23,8 @@
   "runtime": {
     "internal_port": 8000,
     "timeout_seconds": 30,
+    "token_budget": 8192,
+    "tool_budget": 6,
     "max_concurrency": 8,
     "memory_limit": "1g"
   },

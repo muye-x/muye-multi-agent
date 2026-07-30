@@ -190,17 +190,19 @@ v2.0 的知识 Agent 由本地、确定性 Generator 生成，首次产物位于
 
 ```bash
 ./scripts/muye.sh knowledge analyze <knowledge-slug>
-./scripts/muye.sh knowledge approve-schema <knowledge-slug> --checksum <sha256>
-./scripts/muye.sh knowledge approve-skill <knowledge-slug> --checksum <sha256>
+./scripts/muye.sh knowledge approve-schema <knowledge-slug> --checksum <sha256> --approved-by <principal>
+./scripts/muye.sh knowledge approve-skill <knowledge-slug> --checksum <sha256> --approved-by <principal>
+./scripts/muye.sh agent approve-profile <agent-slug> --checksum <sha256> --approved-by <principal>
 ./scripts/muye.sh agent generate <agent-slug> --knowledge <knowledge-slug>
 ./scripts/muye.sh agent validate <agent-slug>
 ./scripts/muye.sh agent diff <agent-slug> --template latest
 ```
 
-命令可从任意目录调用，Shell wrapper 会定位 Scaffold 根目录并使用根 `.venv`。输入配置结构、生成后的
-接管流程及模板升级方式见 [模板 Agent Generator 与开发者接管](docs/v2.0-agent-generator.md)。知识构建
-和检索评测的实际 Job 在阶段 4 引入；在此之前 `knowledge build` 与 `knowledge evaluate` 会明确失败，不会
-产生半成品。
+命令可从任意目录调用，Shell wrapper 会定位 Scaffold 根目录并使用根 `.venv`。三个确认命令会在
+`config/approvals/{resource,skill,profile}/` 写入可提交的审批记录；任一 revision 或 checksum 变化后必须
+重新确认，Generator 缺少匹配记录时会拒绝生成。输入配置结构、生成后的接管流程及模板升级方式见
+[模板 Agent Generator 与开发者接管](docs/v2.0-agent-generator.md)。知识构建和检索评测的实际 Job 在阶段 4
+引入；在此之前 `knowledge build` 与 `knowledge evaluate` 会明确失败，不会产生半成品。
 
 ## 安全边界
 
