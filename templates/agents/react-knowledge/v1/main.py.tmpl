@@ -1,0 +1,7 @@
+"""标准内部知识 Agent 的 HTTP 入口。"""
+from muye_multi_agent_sdk import create_app
+
+from agent import {{ class_name }}
+
+
+app = create_app({{ class_name }}())

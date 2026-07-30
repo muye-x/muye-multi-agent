@@ -1,0 +1,26 @@
+schema_version: muye.ai/agent-descriptor/v1
+agent_id: {{ agent_id }}
+slug: {{ slug }}
+tool_name: {{ tool_name }}
+display_name: {{ display_name }}
+version: {{ agent_version }}
+description: {{ description }}
+supported_intents: {{ supported_intents_yaml }}
+entrypoint: main:app
+api_profile: internal
+protocol_version: muye-agent-internal/3.0
+model_alias: {{ model_alias }}
+resources:
+  - resource_id: {{ resource_id }}
+    skill_ref: {{ skill_ref }}
+runtime:
+  internal_port: 8000
+  timeout_seconds: 30
+  max_concurrency: 2
+  memory_limit: 512m
+deployment:
+  enabled: false
+source:
+  template_id: react-knowledge
+  template_version: 1.0.0
+  provenance_file: .muye-generation.json

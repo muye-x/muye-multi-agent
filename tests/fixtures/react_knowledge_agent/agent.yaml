@@ -1,0 +1,9 @@
+agent_id: agent_fixture_knowledge
+slug: fixture-knowledge
+version: 1.0.0
+description: 回答已发布产品手册中的问题。
+supported_intents:
+  - 产品功能咨询
+resources:
+  - resource_id: kb.product_handbook
+    skill_ref: skill_product_handbook@1

@@ -499,7 +499,7 @@ def test_main_sub_agent_caller_forwards_cancel() -> None:
 
 def test_main_sub_agent_caller_rejects_legacy_capabilities() -> None:
     """主 Agent 不得调用未声明 v3 internal 协议的子服务。"""
-    with pytest.raises(SubAgentCallError, match="internal v3 协议"):
+    with pytest.raises(SubAgentCallError, match="协议版本不匹配"):
         SubAgentCaller._validate_capabilities(
             {"agent_name": "legacy", "api_profiles": ["internal"], "supports_streaming": True},
             require_streaming=True,

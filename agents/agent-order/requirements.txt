@@ -1,1 +1,1 @@
-muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@v1.1.0
+muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@v2.0.0

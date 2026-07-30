@@ -1,0 +1,50 @@
+"""由 react-knowledge/v1 渲染的只读知识 Agent。"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from muye_multi_agent_sdk import AgentIdentity, AgentMetadata, ReActAgent
+from muye_multi_agent_sdk.integrations.muye_data import DataAccessContext
+from muye_multi_agent_sdk.tools import create_scoped_data_retrieval_tool
+
+
+class {{ class_name }}(ReActAgent):
+    """只调用固定逻辑资源和固定 scope 的内部知识 Agent。"""
+
+    @property
+    def metadata(self) -> AgentMetadata:
+        return AgentMetadata(
+            name="{{ slug }}",
+            version="{{ agent_version }}",
+            description="{{ description }}",
+            supported_intents={{ supported_intents_json }},
+            identity=AgentIdentity(
+                agent_id="{{ agent_id }}",
+                agent_version="{{ agent_version }}",
+                descriptor_checksum=os.environ["MUYE_AGENT_DESCRIPTOR_CHECKSUM"],
+                source_tree_checksum=os.environ["MUYE_AGENT_SOURCE_TREE_CHECKSUM"],
+            ),
+        )
+
+    @property
+    def instructions(self) -> str:
+        return (Path(__file__).parent / "prompts" / "system.md").read_text(encoding="utf-8")
+
+    @property
+    def langchain_tools(self) -> list:
+        return [
+            create_scoped_data_retrieval_tool(
+                self.data_client,
+                access_context=DataAccessContext(
+                    service_id=os.environ["MUYE_AGENT_SERVICE_ID"],
+                    deployment_id=os.environ["MUYE_AGENT_DEPLOYMENT_ID"],
+                    agent=self.metadata.identity,
+                ),
+                name="{{ tool_name }}_retrieve",
+                resource="{{ resource_id }}",
+                pipeline="{{ retrieval_pipeline }}",
+                fixed_filter={"op": "eq", "field": "{{ scope_field }}", "value": "{{ scope_value }}"},
+                return_fields=["title", "source", "citation_id", "source_locator"],
+            )
+        ]
