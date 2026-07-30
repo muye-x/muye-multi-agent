@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from contracts.models import AGENT_ID_PATTERN
+
 
 CHECKSUM_PATTERN = r"^[a-f0-9]{64}$"
 SLUG_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
@@ -102,6 +104,7 @@ class Phase1PocConfigV1(StrictPocModel):
     """PoC 使用的逻辑资源与固定检索范围，不允许物理 Collection 进入 Agent 输入。"""
 
     schema_version: Literal["muye.ai/phase1-poc-config/v1"]
+    agent_id: str = Field(pattern=AGENT_ID_PATTERN)
     agent_slug: str = Field(min_length=1, max_length=63, pattern=SLUG_PATTERN)
     resource_id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
     resource_revision: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$")

@@ -33,7 +33,6 @@ def build_generation_spec(
     config: Phase1PocConfigV1,
 ) -> AgentGenerationSpecV1:
     """由可信 PoC 配置而非 LLM 组装正式 GenerationSpec 形状。"""
-    agent_id = f"agent_{config.agent_slug.replace('-', '_')}"
     profile_checksum = canonical_checksum(profile.model_dump(mode="json"))
     skill_checksum = canonical_checksum(
         {
@@ -45,7 +44,7 @@ def build_generation_spec(
     )
     payload = {
         "schema_version": "muye.ai/agent-generation-spec/v1",
-        "agent_id": agent_id,
+        "agent_id": config.agent_id,
         "slug": config.agent_slug,
         "template_id": "poc-react-knowledge",
         "template_version": "0.1.0",
@@ -68,6 +67,32 @@ def build_generation_spec(
     }
     payload["input_checksum"] = canonical_checksum(payload)
     return AgentGenerationSpecV1.model_validate(payload)
+
+
+def validate_generation_spec(
+    *,
+    generation_spec: AgentGenerationSpecV1,
+    document: ParsedDocumentV1,
+    profile: AgentProfileProposalV1,
+    config: Phase1PocConfigV1,
+) -> None:
+    """确保渲染用 spec 是当前可信 PoC 输入的完整、可重放快照。
+
+    渲染代码需要读取 config 中的固定 scope 等字段，因此在写入任何临时目录前重建
+    spec 并逐字段比对，防止源码与 provenance 对应不同输入。
+    """
+    expected = build_generation_spec(document=document, profile=profile, config=config)
+    actual_payload = generation_spec.model_dump(mode="json")
+    expected_payload = expected.model_dump(mode="json")
+    mismatched_fields = [
+        field_name
+        for field_name in expected_payload
+        if actual_payload[field_name] != expected_payload[field_name]
+    ]
+    if mismatched_fields:
+        raise ValueError(
+            "generation_spec 与可信 PoC 输入不一致：" + ", ".join(sorted(mismatched_fields))
+        )
 
 
 def canonical_checksum(value: object) -> str:

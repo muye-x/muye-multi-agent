@@ -4,18 +4,43 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from contracts.models import CONTRACT_SCHEMA_MODELS
+from contracts.models import (
+    CONTRACT_SCHEMA_MODELS,
+    AgentBuildRecordV1,
+    AgentCatalogEntryV1,
+    AgentCatalogSnapshotV1,
+    AgentDeploymentV1,
+    AgentDescriptorV1,
+    AgentGenerationSpecV1,
+    AgentRuntimeV1,
+    AgentSourceV1,
+    ResourceBindingV1,
+    SourceProvenanceV1,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_DIRECTORY = PROJECT_ROOT / "contracts" / "fixtures"
 SCHEMA_DIRECTORY = PROJECT_ROOT / "contracts" / "schemas"
 TYPESCRIPT_DTO_PATH = PROJECT_ROOT / "contracts" / "typescript" / "agent-contracts-v1.ts"
+TYPESCRIPT_INTERFACE_MODELS: dict[str, type[BaseModel]] = {
+    "ResourceBindingV1": ResourceBindingV1,
+    "AgentRuntimeV1": AgentRuntimeV1,
+    "AgentDeploymentV1": AgentDeploymentV1,
+    "AgentSourceV1": AgentSourceV1,
+    "AgentDescriptorV1": AgentDescriptorV1,
+    "AgentGenerationSpecV1": AgentGenerationSpecV1,
+    "SourceProvenanceV1": SourceProvenanceV1,
+    "AgentBuildRecordV1": AgentBuildRecordV1,
+    "AgentCatalogEntryV1": AgentCatalogEntryV1,
+    "AgentCatalogSnapshotV1": AgentCatalogSnapshotV1,
+}
 
 
 def _read_json(path: Path) -> Any:
@@ -57,15 +82,35 @@ def test_checked_in_json_schema_matches_pydantic_contract(schema_name: str) -> N
     assert actual == expected
 
 
-def test_typescript_dto_declares_all_public_contracts() -> None:
-    """尚未引入 Web 工程前，至少防止 TypeScript 声明遗漏任一公开契约。"""
-    source = TYPESCRIPT_DTO_PATH.read_text(encoding="utf-8")
+def _typescript_interface_fields(source: str) -> dict[str, dict[str, bool]]:
+    """提取 DTO interface 的字段及可选性，无需为契约门禁引入 Node 工具链。"""
+    interfaces: dict[str, dict[str, bool]] = {}
+    interface_pattern = re.compile(
+        r"^export interface (?P<name>[A-Za-z][A-Za-z0-9_]*) \{\n(?P<body>.*?)^\}",
+        re.MULTILINE | re.DOTALL,
+    )
+    field_pattern = re.compile(r"^(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P<optional>\?)?:")
+    for match in interface_pattern.finditer(source):
+        fields: dict[str, bool] = {}
+        for line in match.group("body").splitlines():
+            field_match = field_pattern.match(line.strip())
+            if field_match:
+                fields[field_match.group("name")] = bool(field_match.group("optional"))
+        interfaces[match.group("name")] = fields
+    return interfaces
 
-    for contract_name in (
-        "AgentDescriptorV1",
-        "AgentGenerationSpecV1",
-        "SourceProvenanceV1",
-        "AgentBuildRecordV1",
-        "AgentCatalogSnapshotV1",
-    ):
-        assert f"export interface {contract_name}" in source
+
+def test_typescript_dto_fields_match_pydantic_contracts() -> None:
+    """TypeScript DTO 的字段与可选性必须和 Pydantic JSON Schema 同步。"""
+    interfaces = _typescript_interface_fields(TYPESCRIPT_DTO_PATH.read_text(encoding="utf-8"))
+
+    for interface_name, model in TYPESCRIPT_INTERFACE_MODELS.items():
+        assert interface_name in interfaces
+        schema = model.model_json_schema()
+        expected_fields = set(schema["properties"])
+        expected_required = set(schema.get("required", []))
+        actual_fields = interfaces[interface_name]
+        actual_required = {name for name, optional in actual_fields.items() if not optional}
+
+        assert set(actual_fields) == expected_fields
+        assert actual_required == expected_required

@@ -70,7 +70,7 @@ export interface AgentGenerationSpecV1 {
   model_alias: string;
   retrieval_pipeline: string;
   scope_filter_ref: string;
-  allowed_filter_fields: string[];
+  allowed_filter_fields?: string[];
   allowed_return_fields: string[];
   tool_budget: number;
   token_budget: number;
@@ -134,7 +134,7 @@ export interface AgentCatalogSnapshotV1 {
   schema_version: "muye.ai/agent-catalog-snapshot/v1";
   catalog_revision: string;
   catalog_checksum: string;
-  agents: AgentCatalogEntryV1[];
+  agents?: AgentCatalogEntryV1[];
 }
 
 export type ContractSchemaName =

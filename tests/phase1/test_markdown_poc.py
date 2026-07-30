@@ -14,6 +14,14 @@ from contracts.models import AgentDescriptorV1, SourceProvenanceV1
 from poc.phase1.contracts import Phase1PocConfigV1
 from poc.phase1.generator import generate_agent_directory
 from poc.phase1.markdown import parse_markdown_file
+from poc.phase1.milvus.verify_hybrid import (
+    DEFAULT_MILVUS_URI,
+    EMBEDDING_DIMENSIONS,
+    KNOWLEDGE_ID,
+    _DOCUMENTS,
+    assert_results_scoped,
+    validate_local_milvus_uri,
+)
 from poc.phase1.profile import build_generation_spec, build_profile
 
 
@@ -26,6 +34,7 @@ def _poc_inputs() -> tuple[object, object, Phase1PocConfigV1]:
     profile = build_profile(document)
     config = Phase1PocConfigV1(
         schema_version="muye.ai/phase1-poc-config/v1",
+        agent_id="agent_product_handbook",
         agent_slug="product-handbook",
         resource_id="kb.product_handbook",
         resource_revision="resource/phase1-v1",
@@ -94,6 +103,38 @@ def test_poc_generator_creates_valid_agent_and_never_overwrites_developer_change
     assert prompt.read_text(encoding="utf-8") == "开发者自定义 Prompt。\n"
 
 
+@pytest.mark.parametrize(
+    ("field_name", "replacement", "expected_spec_field"),
+    [
+        ("agent_id", "agent_alternate_handbook", "agent_id"),
+        ("resource_revision", "resource/phase1-v2", "resource_revision"),
+        ("model_alias", "chat-alternate", "model_alias"),
+        ("scope_value", "kb.attacker", "scope_filter_ref"),
+    ],
+)
+def test_poc_generator_rejects_config_that_disagrees_with_generation_spec(
+    tmp_path: Path,
+    field_name: str,
+    replacement: str,
+    expected_spec_field: str,
+) -> None:
+    """源码依赖的每项 config 都必须与 provenance 所用 spec 完整一致。"""
+    document, profile, config = _poc_inputs()
+    spec = build_generation_spec(document=document, profile=profile, config=config)  # type: ignore[arg-type]
+    inconsistent_config = config.model_copy(update={field_name: replacement})
+
+    with pytest.raises(ValueError, match=expected_spec_field):
+        generate_agent_directory(
+            target_parent=tmp_path,
+            generation_spec=spec,
+            profile=profile,  # type: ignore[arg-type]
+            document=document,  # type: ignore[arg-type]
+            config=inconsistent_config,
+        )
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_milvus_poc_files_keep_hybrid_resource_and_local_only_port() -> None:
     compose = yaml.safe_load((PROJECT_ROOT / "poc" / "phase1" / "milvus" / "compose.yaml").read_text(encoding="utf-8"))
     data_config = yaml.safe_load(
@@ -105,8 +146,10 @@ def test_milvus_poc_files_keep_hybrid_resource_and_local_only_port() -> None:
     assert milvus_environment["MINIO_ACCESS_KEY_ID"] == "${PHASE1_MINIO_ROOT_USER:?set PHASE1_MINIO_ROOT_USER in the environment}"
     assert milvus_environment["MINIO_SECRET_ACCESS_KEY"] == "${PHASE1_MINIO_ROOT_PASSWORD:?set PHASE1_MINIO_ROOT_PASSWORD in the environment}"
     resource = data_config["resources"]["product_handbook"]
+    assert resource["embedding"]["dimensions"] == EMBEDDING_DIMENSIONS
     assert resource["pipelines"]["hybrid"]["type"] == "hybrid"
     assert resource["fields"]["filterable_fields"] == {"knowledge_id": "knowledge_id"}
+    assert all(len(document["embedding"]) == EMBEDDING_DIMENSIONS for document in _DOCUMENTS)
 
 
 def test_hybrid_verifier_declares_bm25_sparse_index_and_scope_filter() -> None:
@@ -116,6 +159,34 @@ def test_hybrid_verifier_declares_bm25_sparse_index_and_scope_filter() -> None:
     assert 'index_type="SPARSE_INVERTED_INDEX"' in verifier
     assert 'metric_type="BM25"' in verifier
     assert 'SCOPE_FILTER = f\'knowledge_id == "{KNOWLEDGE_ID}"\'' in verifier
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://127.0.0.1:19530",
+        "http://milvus.example.test:19530",
+        "http://127.0.0.1:19531",
+        "http://127.0.0.1:19530/other",
+    ],
+)
+def test_hybrid_verifier_rejects_non_local_or_non_default_milvus_uri(uri: str) -> None:
+    with pytest.raises(ValueError, match="仅允许本机"):
+        validate_local_milvus_uri(uri)
+
+
+def test_hybrid_verifier_scope_assertion_checks_every_hit() -> None:
+    assert validate_local_milvus_uri(DEFAULT_MILVUS_URI) == DEFAULT_MILVUS_URI
+    assert_results_scoped(
+        [[{"chunk_id": "chunk_refund_policy", "knowledge_id": KNOWLEDGE_ID}]],
+        query_name="Dense",
+    )
+
+    with pytest.raises(RuntimeError, match="scope 外"):
+        assert_results_scoped(
+            [[{"chunk_id": "chunk_outside_scope", "knowledge_id": "kb.unrelated"}]],
+            query_name="Dense",
+        )
 
 
 def _load_generated_module(path: Path) -> object:

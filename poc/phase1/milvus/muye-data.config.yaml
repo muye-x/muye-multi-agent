@@ -23,7 +23,7 @@ resources:
         knowledge_id: knowledge_id
     embedding:
       model: text-embedding-default
-      dimensions: 1024
+      dimensions: 4
     pipelines:
       hybrid:
         type: hybrid

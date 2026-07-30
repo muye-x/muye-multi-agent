@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -17,11 +19,18 @@ BUILD_RECORD_ID_PATTERN = r"^build_[a-z0-9][a-z0-9_-]{2,63}$"
 IDENTIFIER_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 RESOURCE_ID_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 SAFE_REFERENCE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$"
-SEMVER_PATTERN = r"^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$"
+SEMVER_PATTERN = (
+    r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*))"
+    r"(?:\.(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*)))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 SHA256_PATTERN = r"^[a-f0-9]{64}$"
 SLUG_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 TIMESTAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
 TOOL_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,62}$"
+FIELD_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+SKILL_REF_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_./:-]*@[A-Za-z0-9][A-Za-z0-9_.:-]*$"
 
 
 class ContractModel(BaseModel):
@@ -40,19 +49,31 @@ def _validate_safe_relative_reference(value: str, field_name: str) -> str:
     return value
 
 
+def _validate_rfc3339_timestamp(value: str, field_name: str) -> str:
+    """验证带时区的 RFC 3339 时间，避免形状正确但不可解析的审计值。"""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} 必须是有效的 RFC 3339 时间") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field_name} 必须包含时区")
+    return value
+
+
 class ResourceBindingV1(ContractModel):
     """Agent 可访问的一个逻辑知识资源及其固定检索 Skill。"""
 
     resource_id: str = Field(pattern=RESOURCE_ID_PATTERN)
-    skill_ref: str = Field(pattern=SAFE_REFERENCE_PATTERN)
+    skill_ref: str = Field(min_length=3, max_length=256, pattern=SKILL_REF_PATTERN)
 
     @field_validator("skill_ref")
     @classmethod
     def validate_skill_ref(cls, value: str) -> str:
         """Skill 必须以可审计版本引用，不能退化为隐式最新版本。"""
-        _validate_safe_relative_reference(value, "skill_ref")
-        if "@" not in value:
-            raise ValueError("skill_ref 必须包含明确版本，例如 skill_product@1")
+        skill_name, separator, revision = value.rpartition("@")
+        if not separator or not skill_name or not revision or "@" in skill_name or "@" in revision:
+            raise ValueError("skill_ref 必须是名称@版本格式，例如 skill_product@1")
+        _validate_safe_relative_reference(skill_name, "skill_ref 名称")
         return value
 
 
@@ -161,8 +182,8 @@ class AgentGenerationSpecV1(ContractModel):
     @classmethod
     def validate_field_names(cls, values: list[str]) -> list[str]:
         """限制生成模板只能暴露已确认的逻辑字段集合。"""
-        if any(not value or len(value) > 128 for value in values):
-            raise ValueError("允许字段必须是 1 至 128 个字符")
+        if any(re.fullmatch(FIELD_NAME_PATTERN, value) is None for value in values):
+            raise ValueError("允许字段必须是 1 至 128 个字符的逻辑字段名")
         if len(set(values)) != len(values):
             raise ValueError("允许字段不能重复")
         return values
@@ -183,6 +204,12 @@ class SourceProvenanceV1(ContractModel):
     generated_at: str = Field(pattern=TIMESTAMP_PATTERN)
     generated_files: list[str] = Field(min_length=1, max_length=200)
     generated_source_tree_checksum: str = Field(pattern=SHA256_PATTERN)
+
+    @field_validator("generated_at")
+    @classmethod
+    def validate_generated_at(cls, value: str) -> str:
+        """生成时间必须可被审计系统按 RFC 3339 解析。"""
+        return _validate_rfc3339_timestamp(value, "generated_at")
 
     @field_validator("generated_files")
     @classmethod
@@ -210,6 +237,12 @@ class AgentBuildRecordV1(ContractModel):
     test_report_ref: str = Field(pattern=SAFE_REFERENCE_PATTERN)
     built_at: str = Field(pattern=TIMESTAMP_PATTERN)
     builder_version: str = Field(pattern=SEMVER_PATTERN)
+
+    @field_validator("built_at")
+    @classmethod
+    def validate_built_at(cls, value: str) -> str:
+        """构建时间必须可被审计系统按 RFC 3339 解析。"""
+        return _validate_rfc3339_timestamp(value, "built_at")
 
     @field_validator("sbom_ref", "test_report_ref")
     @classmethod

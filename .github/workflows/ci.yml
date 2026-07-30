@@ -3,7 +3,7 @@ name: verify
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, v2.0.x-dev]
 
 permissions:
   contents: read
@@ -47,9 +47,12 @@ jobs:
       - run: PYTHONPATH=muye-data python -m pytest -q muye-data/tests
       - run: PYTHONPATH=agents/agent-main python -m pytest -q agents/agent-main/tests
       - run: PYTHONPATH=agents/agent-travel:agents/agent-order python -m pytest -q agents/agent-travel/tests agents/agent-order/tests
+      - run: python -m contracts.export_schemas
+      - run: git diff --exit-code -- contracts/schemas
+      - run: PYTHONPATH=. python -m pytest -q tests/contract tests/phase1
       - run: python -m pytest -q tests
       - run: python -m pip check
-      - run: python -m compileall -q muye-llm/src muye-data agents/agent-main agents/agent-travel agents/agent-order muye-gateway/dashboard_api
+      - run: python -m compileall -q contracts poc/phase1 tests/contract tests/phase1 muye-llm/src muye-data agents/agent-main agents/agent-travel agents/agent-order muye-gateway/dashboard_api
       - run: python main.py --dry-run
 
   workspace-hygiene:

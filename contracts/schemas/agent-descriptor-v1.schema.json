@@ -67,7 +67,7 @@
           "type": "string"
         },
         "template_version": {
-          "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+          "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:(?:0|[1-9]\\d*)|(?:\\d*[A-Za-z-][0-9A-Za-z-]*))(?:\\.(?:(?:0|[1-9]\\d*)|(?:\\d*[A-Za-z-][0-9A-Za-z-]*)))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
           "title": "Template Version",
           "type": "string"
         }
@@ -90,7 +90,9 @@
           "type": "string"
         },
         "skill_ref": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+          "maxLength": 256,
+          "minLength": 3,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./:-]*@[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "title": "Skill Ref",
           "type": "string"
         }
@@ -189,7 +191,7 @@
       "type": "string"
     },
     "version": {
-      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?(?:\\+[A-Za-z0-9.-]+)?$",
+      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:(?:0|[1-9]\\d*)|(?:\\d*[A-Za-z-][0-9A-Za-z-]*))(?:\\.(?:(?:0|[1-9]\\d*)|(?:\\d*[A-Za-z-][0-9A-Za-z-]*)))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
       "title": "Version",
       "type": "string"
     }

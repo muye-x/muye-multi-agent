@@ -18,7 +18,7 @@ import yaml
 from contracts.models import AgentDescriptorV1, AgentGenerationSpecV1, SourceProvenanceV1
 
 from .contracts import AgentProfileProposalV1, ParsedDocumentV1, Phase1PocConfigV1
-from .profile import canonical_checksum
+from .profile import validate_generation_spec
 
 
 def generate_agent_directory(
@@ -33,7 +33,7 @@ def generate_agent_directory(
 
     已存在的同名目录一律失败，避免 PoC 或后续工具覆盖开发者接管后的文件。
     """
-    _validate_inputs(generation_spec, profile, config)
+    _validate_inputs(generation_spec, profile, document, config)
     parent = target_parent.resolve()
     parent.mkdir(parents=True, exist_ok=True)
     target = parent / f"agent-{generation_spec.slug}"
@@ -80,15 +80,16 @@ def generate_agent_directory(
 def _validate_inputs(
     generation_spec: AgentGenerationSpecV1,
     profile: AgentProfileProposalV1,
+    document: ParsedDocumentV1,
     config: Phase1PocConfigV1,
 ) -> None:
-    """拒绝 Profile、资源或 slug 与可信 GenerationSpec 不一致的 PoC 输入。"""
-    if generation_spec.slug != config.agent_slug:
-        raise ValueError("generation_spec.slug 与 PoC 配置不一致")
-    if generation_spec.resource_id != config.resource_id:
-        raise ValueError("generation_spec.resource_id 与 PoC 配置不一致")
-    if generation_spec.agent_profile_checksum != canonical_checksum(profile.model_dump(mode="json")):
-        raise ValueError("Agent Profile checksum 与 generation_spec 不一致")
+    """拒绝任何与当前文档、Profile 或可信配置矛盾的 GenerationSpec。"""
+    validate_generation_spec(
+        generation_spec=generation_spec,
+        document=document,
+        profile=profile,
+        config=config,
+    )
 
 
 def _write_agent_files(

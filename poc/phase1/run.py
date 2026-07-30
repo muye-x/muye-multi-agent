@@ -19,6 +19,7 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--document", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--agent-id", required=True)
     parser.add_argument("--slug", required=True)
     parser.add_argument("--resource-id", required=True)
     parser.add_argument("--scope-field", default="knowledge_id")
@@ -29,6 +30,7 @@ def main() -> int:
     profile = build_profile(document)
     config = Phase1PocConfigV1(
         schema_version="muye.ai/phase1-poc-config/v1",
+        agent_id=args.agent_id,
         agent_slug=args.slug,
         resource_id=args.resource_id,
         resource_revision="resource/phase1-v1",

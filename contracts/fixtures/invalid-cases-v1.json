@@ -67,5 +67,54 @@
       ]
     },
     "error_field": "agents"
+  },
+  {
+    "name": "provenance rejects invalid RFC 3339 timestamp",
+    "model": "source-provenance-v1",
+    "patch": {
+      "generated_at": "2026-99-99T99:99:99+99:99"
+    },
+    "error_field": "generated_at"
+  },
+  {
+    "name": "build record rejects invalid semver prerelease",
+    "model": "agent-build-record-v1",
+    "patch": {
+      "agent_version": "1.0.0-.."
+    },
+    "error_field": "agent_version"
+  },
+  {
+    "name": "descriptor rejects skill reference without revision",
+    "model": "agent-descriptor-v1",
+    "patch": {
+      "resources": [
+        {
+          "resource_id": "kb.product_handbook",
+          "skill_ref": "skill@"
+        }
+      ]
+    },
+    "error_field": "resources"
+  },
+  {
+    "name": "generation spec rejects traversal-like filter field",
+    "model": "agent-generation-spec-v1",
+    "patch": {
+      "allowed_filter_fields": [
+        "../../physical_secret"
+      ]
+    },
+    "error_field": "allowed_filter_fields"
+  },
+  {
+    "name": "generation spec rejects return field with spaces",
+    "model": "agent-generation-spec-v1",
+    "patch": {
+      "allowed_return_fields": [
+        "field with spaces"
+      ]
+    },
+    "error_field": "allowed_return_fields"
   }
 ]
