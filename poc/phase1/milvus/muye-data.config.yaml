@@ -1,0 +1,39 @@
+version: 1
+
+connections:
+  phase1_milvus:
+    type: milvus
+    uri: http://127.0.0.1:19530
+    database: default
+
+resources:
+  product_handbook:
+    connection: phase1_milvus
+    target: phase1_product_handbook_v1
+    fields:
+      id: chunk_id
+      content: content
+      vector: embedding
+      keyword: sparse_embedding
+      exposed_fields:
+        title: title
+        source: source
+        citation_id: citation_id
+      filterable_fields:
+        knowledge_id: knowledge_id
+    embedding:
+      model: text-embedding-default
+      dimensions: 1024
+    pipelines:
+      hybrid:
+        type: hybrid
+        dense_candidate_k: 20
+        keyword_candidate_k: 20
+        dense_weight: 1.0
+        keyword_weight: 1.0
+        rank_constant: 60
+    default_pipeline: hybrid
+    default_return_fields:
+      - title
+      - source
+      - citation_id

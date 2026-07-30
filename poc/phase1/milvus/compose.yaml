@@ -1,0 +1,36 @@
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    command: etcd -advertise-client-urls=http://0.0.0.0:2379 -listen-client-urls=http://0.0.0.0:2379 --data-dir=/etcd
+    volumes:
+      - phase1-etcd:/etcd
+
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    command: minio server /minio_data
+    environment:
+      MINIO_ROOT_USER: ${PHASE1_MINIO_ROOT_USER:?set PHASE1_MINIO_ROOT_USER in the environment}
+      MINIO_ROOT_PASSWORD: ${PHASE1_MINIO_ROOT_PASSWORD:?set PHASE1_MINIO_ROOT_PASSWORD in the environment}
+    volumes:
+      - phase1-minio:/minio_data
+
+  milvus:
+    image: milvusdb/milvus:v2.5.10
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${PHASE1_MINIO_ROOT_USER:?set PHASE1_MINIO_ROOT_USER in the environment}
+      MINIO_SECRET_ACCESS_KEY: ${PHASE1_MINIO_ROOT_PASSWORD:?set PHASE1_MINIO_ROOT_PASSWORD in the environment}
+    depends_on:
+      - etcd
+      - minio
+    ports:
+      - "127.0.0.1:19530:19530"
+    volumes:
+      - phase1-milvus:/var/lib/milvus
+
+volumes:
+  phase1-etcd:
+  phase1-minio:
+  phase1-milvus:
