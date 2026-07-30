@@ -1,0 +1,18 @@
+# {{ display_name_markdown }}
+
+这是由 `react-knowledge` 模板生成的内部只读知识 Agent，绑定逻辑资源 `{{ slug_markdown }}` 对应的已确认知识配置。
+
+## 开发者接管
+
+- `agent.yaml` 是身份、能力、逻辑资源和运行预算的唯一配置事实源；修改后请重新执行 `../../scripts/muye.sh agent validate {{ slug_markdown }}`。
+- `.muye-generation.json` 记录初始模板和输入 checksum；`.muye-generation-input.json` 是不含密钥的重放输入，仅供只读 `diff` 使用。
+- 生成器不会覆盖本目录。模板升级请先执行 `../../scripts/muye.sh agent diff {{ slug_markdown }} --template latest`，审阅差异后手工合并或生成新 slug。
+- 禁止在 Agent 中直接访问 Milvus、PostgreSQL、对象存储、Docker Socket 或未声明的网络服务；知识查询只能使用已生成的 scoped retrieval tool。
+
+## 本地验证
+
+从 Scaffold 根目录安装依赖后，设置部署层注入的 `MUYE_AGENT_*` 身份变量，并在本目录执行：
+
+```bash
+../../.venv/bin/python -m pytest -q tests
+```

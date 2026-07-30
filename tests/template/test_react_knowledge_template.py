@@ -44,6 +44,10 @@ def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime
         assert environment_name in source
     assert "MilvusClient" not in source
     assert "scaffold" not in source.lower()
+    assert "load_yaml_config" in source
+    assert "Path(__file__).with_name(\"agent.yaml\")" in source
+    assert (TEMPLATE_DIRECTORY / "README.md.tmpl").is_file()
+    assert (TEMPLATE_DIRECTORY / "tests" / "test_contract.py.tmpl").is_file()
 
 
 def test_fixture_agent_has_no_scaffold_import_and_keeps_a_fixed_scope() -> None:

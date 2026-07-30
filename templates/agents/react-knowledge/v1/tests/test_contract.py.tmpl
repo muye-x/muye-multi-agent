@@ -1,0 +1,27 @@
+"""生成 Agent 的离线 SDK capabilities 契约。"""
+from __future__ import annotations
+
+from muye_multi_agent_sdk import AgentIdentity, assert_agent_contract
+
+from agent import {{ class_name }}
+
+
+def test_generated_agent_declares_deployment_identity(monkeypatch) -> None:
+    """部署身份只接受部署层环境变量，Agent 身份来自 agent.yaml。"""
+    monkeypatch.setenv("MUYE_AGENT_SERVICE_ID", "generated-service")
+    monkeypatch.setenv("MUYE_AGENT_DEPLOYMENT_ID", "generated-deployment")
+    monkeypatch.setenv("MUYE_AGENT_DESCRIPTOR_CHECKSUM", "a" * 64)
+    monkeypatch.setenv("MUYE_AGENT_SOURCE_TREE_CHECKSUM", "b" * 64)
+
+    agent = {{ class_name }}()
+
+    assert_agent_contract(
+        agent,
+        expected_identity=AgentIdentity(
+            agent_id={{ agent_id }},
+            agent_version={{ agent_version }},
+            descriptor_checksum="a" * 64,
+            source_tree_checksum="b" * 64,
+        ),
+        required_features={"cancel", "citation_blocks", "sse", "trusted_deadline"},
+    )

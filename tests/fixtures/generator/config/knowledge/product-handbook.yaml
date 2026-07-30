@@ -1,0 +1,25 @@
+schema_version: muye.ai/knowledge-generation-input/v1
+knowledge_slug: product-handbook
+resource_id: kb.product_handbook
+resource_revision: resource/product-handbook@1
+resource_checksum: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+skill_revision: skill_product_handbook@1
+skill_checksum: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+model_alias: chat-default
+retrieval_pipeline: hybrid
+scope_filter_ref: scope/product-handbook@1
+fixed_scope_filter:
+  op: eq
+  field: knowledge_id
+  value: kb.product_handbook
+allowed_filter_fields:
+  - knowledge_id
+allowed_return_fields:
+  - title
+  - source
+  - citation_id
+  - source_locator
+tool_budget: 6
+token_budget: 8192
+timeout_budget_seconds: 30
+evaluation_set_ref: evaluation/product-handbook@1
