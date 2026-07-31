@@ -1,11 +1,15 @@
 """配置管理模块 - 集中管理所有配置项"""
 
 import os
+import json
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_AGENT_ID_PATTERN = re.compile(r"agent_[a-z0-9][a-z0-9_-]{2,63}")
 
 @dataclass
 class ServerConfig:
@@ -102,6 +106,63 @@ class LLMConfig:
     max_tokens: int = field(
         default_factory=lambda: int(os.getenv('MUYE_LLM_MAX_TOKENS', '4096'))
     )
+
+
+@dataclass
+class CatalogConfig:
+    """Main 到 Control 的 Catalog、授权和服务身份配置。"""
+
+    control_base_url: str = field(
+        default_factory=lambda: os.getenv('MUYE_CONTROL_BASE_URL', '').strip()
+    )
+    main_service_token: str = field(
+        default_factory=lambda: os.getenv('MUYE_CONTROL_MAIN_TOKEN', '').strip()
+    )
+    trusted_caller_token: str = field(
+        default_factory=lambda: os.getenv('MUYE_MAIN_CALLER_TOKEN', '').strip()
+    )
+    agent_tokens_json: str = field(
+        default_factory=lambda: os.getenv('MUYE_MAIN_AGENT_TOKENS_JSON', '{}')
+    )
+    poll_seconds: float = field(
+        default_factory=lambda: float(os.getenv('MUYE_CATALOG_POLL_SECONDS', '5'))
+    )
+    control_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv('MUYE_CONTROL_TIMEOUT_SECONDS', '5'))
+    )
+    circuit_failure_threshold: int = field(
+        default_factory=lambda: int(os.getenv('MUYE_AGENT_CIRCUIT_FAILURE_THRESHOLD', '3'))
+    )
+    circuit_recovery_seconds: float = field(
+        default_factory=lambda: float(os.getenv('MUYE_AGENT_CIRCUIT_RECOVERY_SECONDS', '30'))
+    )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.control_base_url)
+
+    def agent_token(self, agent_id: str) -> str | None:
+        """按稳定 agent_id 读取目标绑定 token，不接受 Catalog 提供环境变量名。"""
+        try:
+            value = json.loads(self.agent_tokens_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("MUYE_MAIN_AGENT_TOKENS_JSON 必须是 JSON 对象") from exc
+        if not isinstance(value, dict) or len(value) > 100:
+            raise ValueError("MUYE_MAIN_AGENT_TOKENS_JSON 必须是字符串映射")
+        normalized: dict[str, str] = {}
+        for key, token in value.items():
+            if (
+                not isinstance(key, str)
+                or _AGENT_ID_PATTERN.fullmatch(key) is None
+                or not isinstance(token, str)
+                or not token.strip()
+                or len(token.strip()) > 4096
+            ):
+                raise ValueError("MUYE_MAIN_AGENT_TOKENS_JSON 包含无效 Agent token")
+            normalized[key] = token.strip()
+        if len(set(normalized.values())) != len(normalized):
+            raise ValueError("每个 SubAgent 必须使用不同的 Main service token")
+        return normalized.get(agent_id)
 
 
 @dataclass
@@ -531,6 +592,7 @@ class Config:
     http_pool: HTTPPoolConfig = field(default_factory=HTTPPoolConfig)
     middleware: MiddlewareConfig = field(default_factory=MiddlewareConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    catalog: CatalogConfig = field(default_factory=CatalogConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
     compression: CompressionConfig = field(default_factory=CompressionConfig)
@@ -557,6 +619,20 @@ def validate_config(config: Config) -> None:
         errors.append("MUYE_LLM_BASE_URL 未配置（必需）")
     elif not config.llm.api_base.startswith(("http://", "https://")):
         errors.append("MUYE_LLM_BASE_URL 必须以 http:// 或 https:// 开头")
+
+    if config.catalog.enabled:
+        if not config.catalog.main_service_token:
+            errors.append("MUYE_CONTROL_BASE_URL 启用时必须配置 MUYE_CONTROL_MAIN_TOKEN")
+        if not config.catalog.trusted_caller_token:
+            errors.append("MUYE_CONTROL_BASE_URL 启用时必须配置 MUYE_MAIN_CALLER_TOKEN")
+    try:
+        config.catalog.agent_token("agent_validation_probe")
+    except ValueError as exc:
+        errors.append(str(exc))
+    if not 0 < config.catalog.poll_seconds <= 300:
+        errors.append("MUYE_CATALOG_POLL_SECONDS 必须为 0 至 300")
+    if not 0 < config.catalog.control_timeout_seconds <= 30:
+        errors.append("MUYE_CONTROL_TIMEOUT_SECONDS 必须为 0 至 30")
 
     # 验证数据库配置（如果使用 PostgreSQL）
     if config.checkpointer.backend == 'postgres' and not config.checkpointer.postgresql_uri:

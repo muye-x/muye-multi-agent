@@ -10,6 +10,8 @@ if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from typing import Dict, Any, Optional, List, Annotated
+from collections.abc import Callable
+from pydantic import SecretStr
 from typing_extensions import TypedDict
 
 from langchain.agents import create_agent
@@ -28,6 +30,7 @@ from middleware import (
     PerformanceProfilingMiddleware
 )
 import logging
+from tools.sub_agent.registry import SubAgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,11 @@ class MainAgentOrchestrator:
         llm_config: Optional[Dict[str, Any]] = None,
         checkpointer: BaseCheckpointSaver | None = None,
         enable_middleware: bool = True,
-        enable_memory: bool = True
+        enable_memory: bool = True,
+        sub_agent_registry: SubAgentRegistry | None = None,
+        sub_agent_runtime_guard: object | None = None,
+        sub_agent_token_provider: Callable[[str], str | SecretStr | None] | None = None,
+        sub_agent_citation_recorder: object | None = None,
     ):
         """
         初始化主 Agent
@@ -79,7 +86,13 @@ class MainAgentOrchestrator:
 
         # 加载工具（延迟导入避免循环依赖）
         from core.tools import get_all_tools
-        self.tools = get_all_tools()
+        self.sub_agent_registry = sub_agent_registry or SubAgentRegistry([])
+        self.tools = get_all_tools(
+            self.sub_agent_registry,
+            runtime_guard=sub_agent_runtime_guard,
+            token_provider=sub_agent_token_provider,
+            citation_recorder=sub_agent_citation_recorder,
+        )
         logger.info(f"工具加载完成，共 {len(self.tools)} 个工具")
 
         # Checkpointer 由 AgentManager 的应用生命周期创建和关闭，避免隐式全局连接。
@@ -167,7 +180,7 @@ class MainAgentOrchestrator:
             'model': self.llm,
             'tools': self.tools,
             'checkpointer': self.checkpointer,
-            'system_prompt': get_system_prompt(),
+            'system_prompt': get_system_prompt(self.sub_agent_registry),
             'state_schema': AgentState,  # 使用自定义状态模式
         }
 
@@ -186,6 +199,8 @@ class MainAgentOrchestrator:
         additional_kwargs: Optional[Dict[str, Any]] = None,
         enable_knowledge: bool = False,  # 新增参数，默认 False
         trace_id: str | None = None,
+        catalog_revision: str = "",
+        allowed_agent_ids: frozenset[str] = frozenset(),
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -216,9 +231,11 @@ class MainAgentOrchestrator:
         config = {
             "configurable": {
                 "ori_query": user_input,
-                "thread_id": session_id,
+                "thread_id": f"{user_id}:{session_id}",
                 "user_id": user_id,
                 "trace_id": trace_id,
+                "catalog_revision": catalog_revision,
+                "allowed_agent_ids": tuple(sorted(allowed_agent_ids)),
                 "user_location": user_location or {}  # 添加到 configurable 中
             },
             "recursion_limit": 500  # 增加递归限制，默认 25 可能不够
@@ -320,7 +337,8 @@ class MainAgentOrchestrator:
 
     async def get_conversation_history(
         self,
-        session_id: str
+        session_id: str,
+        user_id: str = "default_user",
     ) -> List[Dict[str, Any]]:
         """
         获取会话历史
@@ -331,7 +349,7 @@ class MainAgentOrchestrator:
         Returns:
             消息历史列表
         """
-        config = {"configurable": {"thread_id": session_id}}
+        config = {"configurable": {"thread_id": f"{user_id}:{session_id}"}}
 
         try:
             state = await self.agent.aget_state(config)
@@ -353,7 +371,7 @@ class MainAgentOrchestrator:
             logger.warning(f"获取会话历史失败: {e}")
             return []
 
-    async def clear_conversation(self, session_id: str) -> bool:
+    async def clear_conversation(self, session_id: str, user_id: str = "default_user") -> bool:
         """
         清除会话历史
 
@@ -368,7 +386,7 @@ class MainAgentOrchestrator:
             if hasattr(self.checkpointer, 'storage'):
                 keys_to_delete = [
                     k for k in self.checkpointer.storage.keys()
-                    if session_id in str(k)
+                    if f"{user_id}:{session_id}" in str(k)
                 ]
                 for key in keys_to_delete:
                     del self.checkpointer.storage[key]

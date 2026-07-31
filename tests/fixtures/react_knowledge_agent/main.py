@@ -1,7 +1,39 @@
 """fixture Agent 的 internal SDK HTTP 入口。"""
+from __future__ import annotations
+
+import os
+from secrets import compare_digest
+
+from fastapi import Request
 from muye_multi_agent_sdk import create_app
 
 from agent import FixtureKnowledgeAgent
 
 
-app = create_app(FixtureKnowledgeAgent())
+def _load_internal_tokens() -> tuple[str, str, str]:
+    """要求 Main、Control 与 Data 使用三个非空且互不相同的服务凭据。"""
+    tokens = tuple(
+        os.environ.get(name, "").strip()
+        for name in (
+            "MUYE_AGENT_MAIN_TOKEN",
+            "MUYE_AGENT_CONTROL_TOKEN",
+            "MUYE_AGENT_DATA_TOKEN",
+        )
+    )
+    if any(not token for token in tokens) or len(set(tokens)) != len(tokens):
+        raise ValueError("MUYE_AGENT_MAIN_TOKEN、CONTROL_TOKEN、DATA_TOKEN 必须非空且互不相同")
+    return tokens
+
+
+MAIN_TOKEN, CONTROL_TOKEN, _DATA_TOKEN = _load_internal_tokens()
+
+
+def _verify_internal_request(request: Request) -> bool:
+    authorization = request.headers.get("authorization", "")
+    prefix = "Bearer "
+    actual = authorization[len(prefix) :].strip() if authorization.startswith(prefix) else ""
+    expected_tokens = (MAIN_TOKEN, CONTROL_TOKEN) if request.url.path == "/capabilities" else (MAIN_TOKEN,)
+    return bool(actual and any(token and compare_digest(actual, token) for token in expected_tokens))
+
+
+app = create_app(FixtureKnowledgeAgent(), internal_request_verifier=_verify_internal_request)

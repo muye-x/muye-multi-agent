@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -23,6 +24,7 @@ SERVICE_DIR = Path(__file__).resolve().parent
 load_dotenv(SERVICE_DIR / ".env")
 
 from src.api import router  # noqa: E402
+from src.auth import DataServiceAuthorizer  # noqa: E402
 from src.backends.factory import build_backends  # noqa: E402
 from src.clients.llm import MuyeLLMClient  # noqa: E402
 from src.config import ServiceSettings, load_data_config  # noqa: E402
@@ -127,13 +129,16 @@ def create_app(
     *,
     service: RetrievalService | Any | None = None,
     settings_override: ServiceSettings | None = None,
+    agent_authorizer: DataServiceAuthorizer | None = None,
 ) -> FastAPI:
     """创建应用；注入 service 时调用方保留其资源所有权。"""
     settings = settings_override or ServiceSettings.from_env()
+    authorizer = agent_authorizer or DataServiceAuthorizer.from_env(os.environ, base_directory=SERVICE_DIR)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.started_at = time.monotonic()
+        app.state.agent_authorizer = authorizer
         owned_service = service is None
         app.state.retrieval_service = service or build_service(settings)
         reload_task: asyncio.Task[None] | None = None

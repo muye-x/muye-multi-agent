@@ -7,7 +7,7 @@ import asyncio
 
 import config as main_config
 import core.orchestrator as orchestrator_module
-from config.settings import MemoryConfig, validate_config
+from config.settings import CatalogConfig, MemoryConfig, validate_config
 from core.orchestrator import AgentManager
 
 
@@ -30,6 +30,7 @@ def test_disabled_memory_does_not_require_mongodb_uri() -> None:
             enable_mongodb=True,
             mongodb=SimpleNamespace(uri=""),
         ),
+        catalog=CatalogConfig(),
     )
 
     validate_config(config)
@@ -45,6 +46,7 @@ def test_enabled_memory_requires_mongodb() -> None:
             enable_mongodb=False,
             mongodb=SimpleNamespace(uri=""),
         ),
+        catalog=CatalogConfig(),
     )
 
     try:
@@ -68,7 +70,7 @@ def test_agent_manager_does_not_enable_memory_middleware_when_disabled(monkeypat
             return object()
 
     class FakeMainAgent:
-        def __init__(self, *, enable_memory: bool, checkpointer) -> None:
+        def __init__(self, *, enable_memory: bool, checkpointer, **kwargs) -> None:
             observed["enable_memory"] = enable_memory
             observed["checkpointer"] = checkpointer
 
@@ -83,6 +85,7 @@ def test_agent_manager_does_not_enable_memory_middleware_when_disabled(monkeypat
             postgres_pool_timeout=1.0,
             postgres_pool_recycle=1,
         ),
+        catalog=CatalogConfig(),
     )
     monkeypatch.setattr(main_config, "get_config", lambda: config)
     monkeypatch.setattr(orchestrator_module, "CheckpointerManager", FakeCheckpointerManager)

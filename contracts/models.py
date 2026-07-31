@@ -268,6 +268,8 @@ class AgentBuildRecordV1(ContractModel):
 class AgentCatalogEntryV1(ContractModel):
     """MainAgent 加载的单个 SubAgent 可调用描述，URL 必须由服务名派生。"""
 
+    caller: Literal["agent-main"] = "agent-main"
+    target_type: Literal["sub_agent"] = "sub_agent"
     agent_id: str = Field(pattern=AGENT_ID_PATTERN)
     agent_version: str = Field(pattern=SEMVER_PATTERN)
     tool_name: str = Field(pattern=TOOL_NAME_PATTERN)
@@ -284,6 +286,7 @@ class AgentCatalogEntryV1(ContractModel):
     image_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
     resource_bindings: list[ResourceBindingV1] = Field(min_length=1, max_length=20)
     capabilities_checksum: str = Field(pattern=SHA256_PATTERN)
+    max_concurrency: int = Field(default=8, ge=1, le=128)
     status: Literal["DISCOVERED", "STARTING", "ACTIVE", "DEGRADED", "INACTIVE", "REJECTED"]
 
     @field_validator("supported_intents")

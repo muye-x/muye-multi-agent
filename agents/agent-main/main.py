@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -19,6 +19,7 @@ from config import ResourceManager, get_config
 from config.logger_config import init_default_logger
 from config.middleware import ClientIPMiddleware
 from api.routes import chat_router
+from api.trusted_context import trusted_user_id
 
 # 导入收藏路由
 
@@ -85,6 +86,30 @@ async def root():
 async def health():
     """健康检查"""
     return {"status": "healthy"}
+
+
+@app.post("/internal/v1/agents/{agent_id}/smoke")
+async def smoke_agent(agent_id: str, request: Request):
+    """仅供可信 Gateway/部署链路验证授权后的 Main -> Sub 调用。"""
+    user_id = trusted_user_id(request)
+    if user_id is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "AUTHORIZATION_ERROR", "message": "Control Catalog 未启用"},
+        )
+    manager = await AgentManager.get_instance()
+    try:
+        return await manager.smoke_sub_agent(agent_id=agent_id, trusted_user_id=user_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "AUTHORIZATION_ERROR", "message": str(exc)},
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "AGENT_NOT_READY", "message": str(exc)},
+        ) from exc
 
 
 # ===== 启动服务 =====

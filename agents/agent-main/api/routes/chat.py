@@ -4,11 +4,12 @@
 import logging
 from typing import Dict, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.models import ChatRequest, ChatResponse
 from core.orchestrator import AgentManager
+from api.trusted_context import trusted_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, raw_request: Request):
     """
     对话接口（非流式）
 
@@ -28,6 +29,8 @@ async def chat(request: ChatRequest):
     """
     try:
         manager = await AgentManager.get_instance()
+        caller_user_id = trusted_user_id(raw_request)
+        effective_user_id = caller_user_id or request.user_id
 
         # 转换 user_location 为字典
         user_location = None
@@ -44,12 +47,13 @@ async def chat(request: ChatRequest):
         # 执行对话
         result = await manager.chat(
             user_input=request.user_input,
-            user_id=request.user_id,
+            user_id=effective_user_id,
             session_id=request.session_id,
             files=request.files,
             user_location=user_location,
             enable_knowledge=request.enable_knowledge,  # 新增传递
-            user_informations=user_informations
+            user_informations=user_informations,
+            trusted_user_id=caller_user_id,
         )
 
         # 提取最终响应
@@ -57,18 +61,20 @@ async def chat(request: ChatRequest):
 
         return ChatResponse(
             success=True,
-            user_id=request.user_id,
+            user_id=effective_user_id,
             session_id=request.session_id,
             message=final_message
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"对话异常: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, raw_request: Request):
     """
     对话接口（流式输出，包含工具调用过程）
 
@@ -80,6 +86,8 @@ async def chat_stream(request: ChatRequest):
     """
     try:
         manager = await AgentManager.get_instance()
+        caller_user_id = trusted_user_id(raw_request)
+        effective_user_id = caller_user_id or request.user_id
 
         # 转换 user_location 为字典
         user_location = None
@@ -98,12 +106,13 @@ async def chat_stream(request: ChatRequest):
             try:
                 async for chunk in manager.chat_stream(
                     user_input=request.user_input,
-                    user_id=request.user_id,
+                    user_id=effective_user_id,
                     session_id=request.session_id,
                     files=request.files,
                     user_location=user_location,
                     enable_knowledge=request.enable_knowledge,  # 新增传递
-                    user_informations=user_informations
+                    user_informations=user_informations,
+                    trusted_user_id=caller_user_id,
                 ):
                     logger.info(chunk)
                     yield chunk
@@ -111,7 +120,7 @@ async def chat_stream(request: ChatRequest):
                 logger.error(f"流式对话异常: {e}", exc_info=True)
                 from api.stream_protocol import EventNormalizer
 
-                normalizer = EventNormalizer(request.session_id, f"stream_error_{request.session_id}", request.user_id)
+                normalizer = EventNormalizer(request.session_id, f"stream_error_{request.session_id}", effective_user_id)
                 yield normalizer.error("STREAM_ERROR", "流式请求初始化失败", {"type": type(e).__name__}).to_sse()
                 yield normalizer.done().to_sse()
                 yield normalizer.session_end().to_sse()
@@ -126,13 +135,15 @@ async def chat_stream(request: ChatRequest):
             }
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"流式对话初始化异常: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history/{session_id}")
-async def get_history(session_id: str):
+async def get_history(session_id: str, request: Request):
     """
     获取会话历史
 
@@ -144,7 +155,8 @@ async def get_history(session_id: str):
     """
     try:
         manager = await AgentManager.get_instance()
-        history = await manager.agent.get_conversation_history(session_id)
+        caller_user_id = trusted_user_id(request)
+        history = await manager.agent.get_conversation_history(session_id, caller_user_id or "default_user")
 
         return {
             "success": True,
@@ -152,13 +164,15 @@ async def get_history(session_id: str):
             "history": history
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取历史异常: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/history/{session_id}")
-async def clear_history(session_id: str):
+async def clear_history(session_id: str, request: Request):
     """
     清除会话历史
 
@@ -170,7 +184,8 @@ async def clear_history(session_id: str):
     """
     try:
         manager = await AgentManager.get_instance()
-        success = await manager.agent.clear_conversation(session_id)
+        caller_user_id = trusted_user_id(request)
+        success = await manager.agent.clear_conversation(session_id, caller_user_id or "default_user")
 
         return {
             "success": success,
@@ -178,6 +193,8 @@ async def clear_history(session_id: str):
             "message": "会话历史已清除" if success else "清除失败"
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"清除历史异常: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

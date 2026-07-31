@@ -37,6 +37,42 @@ class ConfigurationError(Exception):
     """本地配置无效；该错误应阻止生产运行时启动。"""
 
 
+class ServiceAuthenticationError(DataServiceError):
+    """调用方没有提供有效且目标绑定的服务凭据。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "AUTHENTICATION_ERROR",
+            "服务认证失败",
+            status_code=401,
+            recoverable=False,
+        )
+
+
+class ServiceAuthorizationError(DataServiceError):
+    """服务身份不能访问请求的逻辑 Resource 或部署修订。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "AUTHORIZATION_ERROR",
+            "Resource 不可访问",
+            status_code=403,
+            recoverable=False,
+        )
+
+
+class AuthorizationUnavailableError(DataServiceError):
+    """active Catalog 无法安全读取时拒绝全部 Agent 数据访问。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "AUTHORIZATION_UNAVAILABLE",
+            "服务授权暂时不可用",
+            status_code=503,
+            recoverable=True,
+        )
+
+
 class InvalidRequestError(DataServiceError):
     """请求在资源相关校验阶段失败。"""
 

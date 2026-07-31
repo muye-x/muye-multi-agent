@@ -25,6 +25,12 @@
           "title": "Base Url",
           "type": "string"
         },
+        "caller": {
+          "const": "agent-main",
+          "default": "agent-main",
+          "title": "Caller",
+          "type": "string"
+        },
         "capabilities_checksum": {
           "pattern": "^[a-f0-9]{64}$",
           "title": "Capabilities Checksum",
@@ -56,6 +62,13 @@
           "pattern": "^muye-agent-internal/3(?:\\.\\d+)?$",
           "title": "Internal Protocol Version",
           "type": "string"
+        },
+        "max_concurrency": {
+          "default": 8,
+          "maximum": 128,
+          "minimum": 1,
+          "title": "Max Concurrency",
+          "type": "integer"
         },
         "resource_bindings": {
           "items": {
@@ -98,6 +111,12 @@
           "minItems": 1,
           "title": "Supported Intents",
           "type": "array"
+        },
+        "target_type": {
+          "const": "sub_agent",
+          "default": "sub_agent",
+          "title": "Target Type",
+          "type": "string"
         },
         "timeout_seconds": {
           "maximum": 300,

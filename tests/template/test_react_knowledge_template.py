@@ -1,8 +1,12 @@
 """阶段 2 标准 ReAct 知识模板与独立 fixture 的静态契约测试。"""
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
+from fastapi import Request
 import yaml
 
 
@@ -26,6 +30,7 @@ def test_react_knowledge_template_declares_a_pinned_sdk_and_digest_only_base_ima
     assert (TEMPLATE_DIRECTORY / "requirements.txt.tmpl").read_text(encoding="utf-8") == (
         "muye-multi-agent-sdk @ https://github.com/muye-x/muye-multi-agent-sdk/archive/refs/tags/v2.0.0.tar.gz\n"
         "langchain==1.3.14\n"
+        "httpx==0.28.1\n"
     )
     assert dockerfile.startswith("ARG MUYE_AGENT_BASE_IMAGE\nFROM ${MUYE_AGENT_BASE_IMAGE}\n")
     assert "USER 10001" in dockerfile
@@ -44,6 +49,7 @@ def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime
         "MUYE_AGENT_DEPLOYMENT_ID",
         "MUYE_AGENT_DESCRIPTOR_CHECKSUM",
         "MUYE_AGENT_SOURCE_TREE_CHECKSUM",
+        "MUYE_AGENT_DATA_TOKEN",
     ):
         assert environment_name in source
     assert "MilvusClient" not in source
@@ -71,4 +77,70 @@ def test_fixture_agent_has_no_scaffold_import_and_keeps_a_fixed_scope() -> None:
     assert (FIXTURE_DIRECTORY / "requirements.txt").read_text(encoding="utf-8") == (
         "muye-multi-agent-sdk @ https://github.com/muye-x/muye-multi-agent-sdk/archive/refs/tags/v2.0.0.tar.gz\n"
         "langchain==1.3.14\n"
+        "httpx==0.28.1\n"
     )
+
+
+def test_internal_entrypoint_separates_main_and_control_credentials() -> None:
+    source = (TEMPLATE_DIRECTORY / "main.py.tmpl").read_text(encoding="utf-8")
+
+    assert "MUYE_AGENT_MAIN_TOKEN" in source
+    assert "MUYE_AGENT_CONTROL_TOKEN" in source
+    assert 'request.url.path == "/capabilities"' in source
+    assert "MUYE_AGENT_INTERNAL_TOKEN" not in source
+
+
+def test_control_and_data_credentials_cannot_invoke_sub_agent(monkeypatch) -> None:
+    monkeypatch.setenv("MUYE_AGENT_MAIN_TOKEN", "main-token")
+    monkeypatch.setenv("MUYE_AGENT_CONTROL_TOKEN", "control-token")
+    monkeypatch.setenv("MUYE_AGENT_DATA_TOKEN", "data-token")
+    monkeypatch.setitem(sys.modules, "agent", SimpleNamespace(FixtureKnowledgeAgent=lambda: object()))
+    import muye_multi_agent_sdk
+
+    monkeypatch.setattr(muye_multi_agent_sdk, "create_app", lambda *_args, **_kwargs: object())
+    specification = importlib.util.spec_from_file_location(
+        "fixture_internal_entrypoint",
+        FIXTURE_DIRECTORY / "main.py",
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+    def request(path: str, token: str) -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": path,
+                "headers": [(b"authorization", f"Bearer {token}".encode())],
+            }
+        )
+
+    assert module._verify_internal_request(request("/invoke", "main-token")) is True
+    assert module._verify_internal_request(request("/capabilities", "control-token")) is True
+    for path in ("/invoke", "/invoke/stream", "/cancel"):
+        assert module._verify_internal_request(request(path, "control-token")) is False
+        assert module._verify_internal_request(request(path, "data-token")) is False
+
+
+def test_internal_entrypoint_rejects_reused_service_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("MUYE_AGENT_MAIN_TOKEN", "shared-token")
+    monkeypatch.setenv("MUYE_AGENT_CONTROL_TOKEN", "control-token")
+    monkeypatch.setenv("MUYE_AGENT_DATA_TOKEN", "shared-token")
+    monkeypatch.setitem(sys.modules, "agent", SimpleNamespace(FixtureKnowledgeAgent=lambda: object()))
+    import muye_multi_agent_sdk
+
+    monkeypatch.setattr(muye_multi_agent_sdk, "create_app", lambda *_args, **_kwargs: object())
+    specification = importlib.util.spec_from_file_location(
+        "fixture_reused_internal_credentials",
+        FIXTURE_DIRECTORY / "main.py",
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+
+    try:
+        specification.loader.exec_module(module)
+    except ValueError as exc:
+        assert "互不相同" in str(exc)
+    else:
+        raise AssertionError("生成 Agent 必须拒绝复用的服务凭据")

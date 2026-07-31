@@ -289,8 +289,8 @@ def test_main_chat_stream_lock_timeout_keeps_original_stream(monkeypatch: pytest
     manager = _stream_manager(monkeypatch, FakeStreamGraph())
 
     async def run() -> list[dict[str, object]]:
-        request = manager._execution_request("holder", "s1")
-        options = ExecutionOptions(execution_key="main:s1", wait_for_session=True)
+        request = manager._execution_request("u1", "s1")
+        options = ExecutionOptions(execution_key="main:u1:s1", wait_for_session=True)
         async with manager.execution_manager.acquire("agent-main", request, options):
             return await _collect_main_stream(manager)
 
@@ -336,7 +336,7 @@ def test_main_sub_agent_caller_negotiates_then_invokes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/capabilities":
-            return httpx.Response(200, json={"agent_name": "travel-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True})
+                return httpx.Response(200, json={"agent_name": "travel-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True, "features": ["trusted_deadline"]})
         return httpx.Response(200, json={"status": "success", "payload": {"result_data": {"markdown": "ok"}}})
 
     async def run() -> None:
@@ -363,7 +363,7 @@ def test_main_sub_agent_stream_filters_child_session_envelope() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/capabilities":
-            return httpx.Response(200, json={"agent_name": "travel-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True})
+                return httpx.Response(200, json={"agent_name": "travel-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True, "features": ["trusted_deadline"]})
         return httpx.Response(200, text=stream_body, headers={"content-type": "text/event-stream"})
 
     async def run() -> None:
@@ -383,23 +383,27 @@ def test_main_sub_agent_stream_filters_child_session_envelope() -> None:
     assert paths == ["/capabilities", "/invoke/stream"]
 
 
-def test_sub_agent_tools_expose_travel_and_order_routing_rules() -> None:
-    """模型可从工具定义得知旅行和不完整订单也必须路由到对应子 Agent。"""
+def test_sub_agent_tools_expose_only_catalog_descriptions() -> None:
+    """工具描述只能来自当前授权 Catalog，不能依赖固定 Travel/Order 文案。"""
     tools = build_sub_agent_tools(
         SubAgentRegistry(
             [
-                SubAgentDescriptor("travel", "http://travel.test", 2),
-                SubAgentDescriptor("order", "http://order.test", 2),
+                SubAgentDescriptor(
+                    "product_help",
+                    "http://product.test",
+                    2,
+                    description="查询已发布产品手册。",
+                    supported_intents=("产品功能咨询",),
+                ),
             ]
         )
     )
     descriptions = {tool.name: tool.description for tool in tools}
 
-    assert set(descriptions) == {"travel", "order"}
-    assert "旅行" in descriptions["travel"]
-    assert "必须调用" in descriptions["travel"]
-    assert "信息不完整" in descriptions["order"]
-    assert "必须调用" in descriptions["order"]
+    assert set(descriptions) == {"product_help"}
+    assert "查询已发布产品手册" in descriptions["product_help"]
+    assert "产品功能咨询" in descriptions["product_help"]
+    assert "travel" not in str(descriptions).lower()
 
     assert all("muye:sub-agent" in (tool.tags or []) for tool in tools)
 
@@ -408,7 +412,7 @@ def test_sub_agent_tool_forwards_runtime_identity(monkeypatch: pytest.MonkeyPatc
     """主 Agent 调用子服务时必须透传真实会话身份，不能落入固定默认值。"""
     captured: dict[str, str] = {}
 
-    async def fake_stream(self, _descriptor, *, task, user_id, session_id, trace_id):
+    async def fake_stream(self, _descriptor, *, task, user_id, session_id, trace_id, service_token):
         captured.update(task=task, user_id=user_id, session_id=session_id, trace_id=trace_id)
         yield {"event": "block", "data": {"content": "ok"}}
 
@@ -428,7 +432,7 @@ def test_sub_agent_tool_forwards_runtime_identity(monkeypatch: pytest.MonkeyPatc
 def test_sub_agent_tool_tag_propagates_to_langchain_events(monkeypatch: pytest.MonkeyPatch) -> None:
     """主图必须能通过真实 LangChain event tag 识别子 Agent 工具。"""
 
-    async def fake_stream(self, _descriptor, *, task, user_id, session_id, trace_id):
+    async def fake_stream(self, _descriptor, *, task, user_id, session_id, trace_id, service_token):
         yield {"event": "block", "data": {"type": "markdown", "content": "ok"}}
 
     monkeypatch.setattr(SubAgentCaller, "stream", fake_stream)
@@ -455,20 +459,33 @@ def test_sub_agent_tool_tag_propagates_to_langchain_events(monkeypatch: pytest.M
     assert all("muye:sub-agent" in event.get("tags", []) for event in lifecycle_events)
 
 
-def test_system_prompt_routes_travel_and_incomplete_order_to_sub_agents(
+def test_system_prompt_contains_only_authorized_catalog_agents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """提示词不得将旅行或不完整订单重新路由到网页搜索或主 Agent 澄清。"""
+    """未授权 Agent 名称和 intent 不得进入模型上下文。"""
     monkeypatch.setattr(
         main_config,
         "get_config",
         lambda: SimpleNamespace(task_decomposition=SimpleNamespace(mode="none")),
     )
-    prompt = get_system_prompt()
+    prompt = get_system_prompt(
+        SubAgentRegistry(
+            [
+                SubAgentDescriptor(
+                    "product_help",
+                    "http://product.test",
+                    2,
+                    description="查询产品手册。",
+                    supported_intents=("产品咨询",),
+                )
+            ]
+        )
+    )
 
-    assert "旅行、旅游、出游、行程、路线、景点、交通、攻略、票务查询|`travel`" in prompt
-    assert "用户一旦表达订单意图即调用订单子 Agent" in prompt
-    assert "信息不完整时也必须先调用" in prompt
+    assert "`product_help`" in prompt
+    assert "产品咨询" in prompt
+    assert "travel" not in prompt.lower()
+    assert "order" not in prompt.lower()
 
 
 def test_main_sub_agent_caller_forwards_cancel() -> None:

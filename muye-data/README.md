@@ -88,6 +88,24 @@ Embedding 注册未声明维度时标为 `degraded`。仍有 Keyword 或可选�
 `degraded`。OpenAPI 同步声明 400/404/422/502/503/504 的统一 `ErrorResponse`，便于 SDK 和
 其他调用方生成严格客户端。
 
+## Agent 服务身份与 Resource 授权
+
+阶段 5 生产部署应设置：
+
+```text
+MUYE_DATA_AGENT_AUTH_ENABLED=true
+MUYE_DATA_AGENT_CATALOG_PATH=../config/runtime/control/active-catalog.json
+MUYE_DATA_AGENT_TOKENS_JSON={"agent_product_handbook":"<独立随机 Data token>"}
+```
+
+相对 Catalog 路径以 `muye-data/` 为基准；容器部署应改为挂载后的绝对路径。启用后，每次 retrieve 和 capabilities
+请求都会重新读取并校验 active Catalog checksum，再把 Bearer token 绑定到 `agent_id`、service/deployment/version、
+descriptor/source checksum。只有状态为 `ACTIVE` 且在该 Agent `resource_bindings` 中声明的 Resource 才可访问。
+Catalog 丢失、损坏、身份漂移、Agent 降级/下线或 Resource 未绑定时均 fail closed。
+
+`MUYE_DATA_AGENT_TOKENS_JSON` 中每个 Agent 必须使用不同 token；同一 Agent 的 Data token 也不能复用其 Main 或
+Control token。默认关闭只用于阶段 4 独立开发和离线测试，不是生产默认建议。
+
 ## 启动与验证
 
 ```bash

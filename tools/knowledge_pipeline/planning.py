@@ -142,9 +142,12 @@ def build_resource_manifest(
             keyword="sparse_embedding",
             exposed_fields={
                 "title": "title",
+                "source": "source_file_id",
                 "citation_id": "citation_id",
+                "source_locator": "source_locators",
                 "source_locators": "source_locators",
                 "source_file_id": "source_file_id",
+                "knowledge_version_id": "knowledge_version_id",
             },
             filterable_fields={"knowledge_version_id": "knowledge_version_id"},
         ).model_dump(mode="json"),
@@ -152,7 +155,14 @@ def build_resource_manifest(
         "embedding_dimensions": config.embedding_dimensions,
         "pipelines": {name: value.model_dump(mode="json") for name, value in pipelines.items()},
         "default_pipeline": config.default_pipeline,
-        "default_return_fields": ["title", "citation_id", "source_locators"],
+        "default_return_fields": [
+            "title",
+            "source",
+            "citation_id",
+            "source_locator",
+            "source_locators",
+            "knowledge_version_id",
+        ],
     }
     return KnowledgeResourceManifestV1.model_validate(
         {**payload, "resource_checksum": canonical_checksum(payload)}

@@ -51,10 +51,11 @@ jobs:
       - run: git diff --exit-code -- contracts/schemas
       - run: PYTHONPATH=. python -m pytest -q tests/contract tests/phase1
       - run: PYTHONPATH=. python -m pytest -q tests/generator
+      - run: python -m tools.cli agent sync --check
       - run: python -m pytest -q tests
       - run: test -z "$(git status --porcelain)"
       - run: python -m pip check
-      - run: python -m compileall -q contracts poc/phase1 tools tests/contract tests/phase1 tests/generator tests/template tests/fixtures muye-llm/src muye-data agents/agent-main agents/agent-travel agents/agent-order muye-gateway/dashboard_api
+      - run: python -m compileall -q contracts control_server poc/phase1 tools tests/contract tests/phase1 tests/generator tests/template tests/catalog tests/control tests/fixtures muye-llm/src muye-data agents/agent-main agents/agent-travel agents/agent-order muye-gateway/dashboard_api
       - run: python main.py --dry-run
 
   workspace-hygiene:

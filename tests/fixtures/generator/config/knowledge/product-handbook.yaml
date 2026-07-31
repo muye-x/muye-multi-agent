@@ -19,6 +19,8 @@ allowed_return_fields:
   - source
   - citation_id
   - source_locator
+  - source_locators
+  - knowledge_version_id
 tool_budget: 6
 token_budget: 8192
 timeout_budget_seconds: 30

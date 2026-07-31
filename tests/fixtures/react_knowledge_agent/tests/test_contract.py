@@ -25,6 +25,7 @@ def test_fixture_declares_deployment_identity(monkeypatch) -> None:
     monkeypatch.setenv("MUYE_AGENT_DEPLOYMENT_ID", "fixture-deployment")
     monkeypatch.setenv("MUYE_AGENT_DESCRIPTOR_CHECKSUM", "a" * 64)
     monkeypatch.setenv("MUYE_AGENT_SOURCE_TREE_CHECKSUM", "b" * 64)
+    monkeypatch.setenv("MUYE_AGENT_DATA_TOKEN", "fixture-data-token")
     agent = _fixture_agent_type()()
     assert_agent_contract(
         agent,

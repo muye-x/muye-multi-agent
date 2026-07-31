@@ -5,12 +5,13 @@ import os
 from pathlib import Path
 from typing import Any
 
+import httpx
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from muye_multi_agent_sdk import AgentConfig, AgentIdentity, AgentMetadata, ReActAgent, load_yaml_config
-from muye_multi_agent_sdk.integrations.muye_data import DataAccessContext
+from muye_multi_agent_sdk.integrations.muye_data import DataAccessContext, DataClient
 from muye_multi_agent_sdk.runtime import ExecutionOptions
 from muye_multi_agent_sdk.tools import create_scoped_data_retrieval_tool
 
@@ -83,8 +84,25 @@ class {{ class_name }}(ReActAgent):
 
     def __init__(self) -> None:
         descriptor = load_yaml_config(Path(__file__).with_name("agent.yaml"), _AgentDescriptor)
-        super().__init__(self._sdk_config(descriptor))
+        config = self._sdk_config(descriptor)
+        data_token = os.environ.get("MUYE_AGENT_DATA_TOKEN", "").strip()
+        if not data_token:
+            raise ValueError("MUYE_AGENT_DATA_TOKEN 未配置")
+        self._data_http_client = httpx.AsyncClient(
+            base_url=config.data.base_url,
+            timeout=config.data.timeout_seconds,
+            headers={"Authorization": f"Bearer {data_token}"},
+            trust_env=False,
+        )
+        super().__init__(config, data_client=DataClient(config.data, http_client=self._data_http_client))
         self._descriptor = descriptor
+
+    async def aclose(self) -> None:
+        """释放 SDK 状态与模板持有的认证 Data HTTP 连接池。"""
+        try:
+            await super().aclose()
+        finally:
+            await self._data_http_client.aclose()
 
     @staticmethod
     def _sdk_config(descriptor: _AgentDescriptor) -> AgentConfig:
@@ -123,6 +141,66 @@ class {{ class_name }}(ReActAgent):
             kwargs["checkpointer"] = checkpointer
         self._agents[stateful] = create_agent(**kwargs)
         return self._agents[stateful]
+
+    def _result_from_messages(self, messages: list[Any], request: Any) -> Any:
+        """把实际检索命中的版本与 locator 放入仅供 Main/Control 使用的终态字段。"""
+        result = super()._result_from_messages(messages, request)
+        if result.status != "success":
+            return result
+        trusted_citations = self._trusted_citations(messages)
+        if not trusted_citations:
+            return result
+        result_data = dict(result.result_data or {})
+        result_data["_muye_citations"] = trusted_citations
+        return result.model_copy(update={"result_data": result_data})
+
+    def _trusted_citations(self, messages: list[Any]) -> list[dict[str, object]]:
+        """只从真实 ToolMessage hit 字段组合引用，忽略模型正文中的同名内容。"""
+        records: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for message in messages:
+            if getattr(message, "type", "") != "tool":
+                continue
+            payload = self._tool_payload(getattr(message, "content", None))
+            if not isinstance(payload, dict):
+                continue
+            public_citations = {
+                item.get("citation_id"): item
+                for item in payload.get("citations", [])
+                if isinstance(item, dict) and isinstance(item.get("citation_id"), str)
+            }
+            for hit in payload.get("hits", []):
+                fields = hit.get("fields") if isinstance(hit, dict) else None
+                if not isinstance(fields, dict):
+                    continue
+                citation_id = fields.get("citation_id")
+                knowledge_version_id = fields.get("knowledge_version_id")
+                locators = fields.get("source_locators", fields.get("source_locator"))
+                locator = locators[0] if isinstance(locators, list) and locators else locators
+                public = public_citations.get(citation_id)
+                if (
+                    not isinstance(citation_id, str)
+                    or citation_id in seen
+                    or not isinstance(knowledge_version_id, str)
+                    or not isinstance(locator, dict)
+                    or not isinstance(public, dict)
+                    or not isinstance(public.get("title"), str)
+                    or not isinstance(public.get("source"), str)
+                ):
+                    continue
+                records.append(
+                    {
+                        "citation_id": citation_id,
+                        "knowledge_version_id": knowledge_version_id,
+                        "locator": locator,
+                        "title": public["title"],
+                        "source": public["source"],
+                    }
+                )
+                seen.add(citation_id)
+                if len(records) == 50:
+                    return records
+        return records
 
     @property
     def metadata(self) -> AgentMetadata:

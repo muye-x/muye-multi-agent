@@ -22,6 +22,7 @@ from src.contracts import (
     RetrieveRequest,
     SnapshotIdentityResponse,
 )
+from src.auth import DataServiceAuthorizer
 from src.retrieval.service import RetrievalService
 
 
@@ -46,6 +47,14 @@ def get_service(request: Request) -> RetrievalService:
     return service
 
 
+def authorize_agent(request: Request, resource_id: str) -> None:
+    """对数据 API 应用可选但 fail-closed 的阶段 5 Agent 服务身份门禁。"""
+    authorizer = getattr(request.app.state, "agent_authorizer", None)
+    if not isinstance(authorizer, DataServiceAuthorizer):
+        raise RuntimeError("data Agent authorizer is not initialized")
+    authorizer.authorize(request, resource_id=resource_id)
+
+
 @router.post(
     "/api/v1/retrieve",
     response_model=RetrievalResponse,
@@ -58,6 +67,7 @@ async def retrieve(
     response: Response,
 ) -> RetrievalResponse:
     """执行配置指定的完整召回 pipeline。"""
+    authorize_agent(request, request_data.resource)
     result = await get_service(request).retrieve(request_data)
     response.headers["X-Trace-Id"] = result.trace_id
     return result
@@ -78,6 +88,7 @@ async def capabilities(
     response: Response,
 ) -> ResourceCapabilities:
     """返回资源公开能力；不会连接数据库。"""
+    authorize_agent(request, resource)
     candidate = request.headers.get("X-Trace-Id", "").strip()
     trace_id = (
         candidate

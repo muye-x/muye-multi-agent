@@ -113,6 +113,8 @@ export interface AgentBuildRecordV1 {
 }
 
 export interface AgentCatalogEntryV1 {
+  caller?: "agent-main";
+  target_type?: "sub_agent";
   agent_id: string;
   agent_version: string;
   tool_name: string;
@@ -129,6 +131,7 @@ export interface AgentCatalogEntryV1 {
   image_digest: string;
   resource_bindings: ResourceBindingV1[];
   capabilities_checksum: string;
+  max_concurrency?: number;
   status: AgentCatalogStatus;
 }
 

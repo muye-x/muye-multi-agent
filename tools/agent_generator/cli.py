@@ -14,6 +14,7 @@ from .checksums import canonical_checksum
 from .generator import AgentGenerator, GeneratorPaths
 from .io import assert_path_within, load_yaml_model
 from .models import AgentProfileInputV1, GenerationApprovalV1
+from tools.agent_catalog.cli import LIFECYCLE_COMMANDS, add_agent_lifecycle_parsers, run_agent_lifecycle_command
 
 
 def add_agent_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -36,6 +37,8 @@ def add_agent_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
     diff = commands.add_parser("diff", help="只读比较当前 Agent 与模板重渲染结果")
     diff.add_argument("slug", help="目标 Agent slug")
     diff.add_argument("--template", choices=("latest", "source"), default="latest", help="比较的模板版本")
+
+    add_agent_lifecycle_parsers(commands)
 
     parser.set_defaults(handler=run_agent_command)
 
@@ -77,6 +80,8 @@ def run_agent_command(arguments: argparse.Namespace, workspace_root: Path) -> in
         if result.text:
             print(result.text, end="" if result.text.endswith("\n") else "\n")
         return 1 if result.has_changes else 0
+    if arguments.agent_command in LIFECYCLE_COMMANDS:
+        return run_agent_lifecycle_command(arguments, workspace_root)
     raise ValueError(f"不支持的 agent 子命令：{arguments.agent_command}")
 
 

@@ -1,15 +1,23 @@
 """
 主 Agent 工具注册中心
 """
+from collections.abc import Callable
 from typing import List
 from langchain_core.tools import BaseTool
+from pydantic import SecretStr
 from tools.registry import get_web_tools
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-def get_all_subgraph_tools() -> List[BaseTool]:
+def get_all_subgraph_tools(
+    registry=None,
+    *,
+    runtime_guard=None,
+    token_provider: Callable[[str], str | SecretStr | None] | None = None,
+    citation_recorder=None,
+) -> List[BaseTool]:
     """
     获取所有子图工作流工具
 
@@ -20,7 +28,13 @@ def get_all_subgraph_tools() -> List[BaseTool]:
     config = get_config()
 
     from tools.sub_agent import build_default_registry, build_sub_agent_tools
-    tools = build_sub_agent_tools(build_default_registry())
+    selected_registry = registry or build_default_registry()
+    tools = build_sub_agent_tools(
+        selected_registry,
+        runtime_guard=runtime_guard,
+        token_provider=token_provider,
+        citation_recorder=citation_recorder,
+    )
 
     logger.info(f"已注册 {len(tools)} 个子图工作流工具")
     return tools
@@ -58,7 +72,13 @@ def get_auxiliary_tools() -> List[BaseTool]:
     return [ask_clarification]
 
 
-def get_all_tools() -> List[BaseTool]:
+def get_all_tools(
+    sub_agent_registry=None,
+    *,
+    runtime_guard=None,
+    token_provider: Callable[[str], str | SecretStr | None] | None = None,
+    citation_recorder=None,
+) -> List[BaseTool]:
     """
     获取所有工具（子图工作流 + 辅助工具 + 网络工具 + 外部 API 工具）
 
@@ -68,7 +88,12 @@ def get_all_tools() -> List[BaseTool]:
     logger.info("=" * 60)
     logger.info("[工具注册] 开始加载所有工具...")
 
-    subgraph_tools = get_all_subgraph_tools()
+    subgraph_tools = get_all_subgraph_tools(
+        sub_agent_registry,
+        runtime_guard=runtime_guard,
+        token_provider=token_provider,
+        citation_recorder=citation_recorder,
+    )
     logger.info(f"[工具注册] 子图工作流工具: {len(subgraph_tools)} 个")
     for tool in subgraph_tools:
         logger.info(f"  - {tool.name}: {tool.description[:50]}...")

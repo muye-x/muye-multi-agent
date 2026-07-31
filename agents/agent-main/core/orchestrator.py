@@ -7,9 +7,20 @@ import uuid
 from contextlib import AsyncExitStack
 from typing import Optional, Dict, Any
 
+from pydantic import SecretStr
+
 from core import MainAgentOrchestrator
 from core.message_builder import MessageBuilder
 from tools.sub_agent.tools import SUB_AGENT_TOOL_TAG
+from tools.sub_agent.catalog import (
+    AuthorizedCatalogView,
+    CatalogProvider,
+    CatalogUnavailableError,
+    HttpControlPlaneClient,
+)
+from tools.sub_agent.registry import SubAgentRegistry
+from tools.sub_agent.runtime import SubAgentRuntimeGuard
+from tools.sub_agent.tools import build_sub_agent_tools
 from utils.profiler import RequestProfiler
 from muye_multi_agent_sdk import AgentRequest, ContextConfig
 from muye_multi_agent_sdk.runtime import CheckpointerManager, ExecutionManager, ExecutionOptions, SessionAcquireTimeoutError
@@ -39,6 +50,12 @@ class AgentManager:
         self.message_builder = MessageBuilder()
         self.initialized = False
         self.execution_manager = ExecutionManager()
+        self.catalog_provider: CatalogProvider | None = None
+        self.sub_agent_runtime_guard: SubAgentRuntimeGuard | None = None
+        self._authorized_agents: dict[tuple[str, tuple[str, ...]], MainAgentOrchestrator] = {}
+        self._agent_token_provider = None
+        self._citation_recorder = None
+        self._memory_enabled = False
 
     @classmethod
     async def get_instance(cls) -> 'AgentManager':
@@ -56,6 +73,7 @@ class AgentManager:
             from config import get_config
 
             config = get_config()
+            self._memory_enabled = config.memory.enabled
             logger.info("初始化 MainAgent（记忆功能：%s）...", "启用" if config.memory.enabled else "关闭")
 
             self.checkpointer_manager = CheckpointerManager(self._checkpointer_config())
@@ -63,16 +81,42 @@ class AgentManager:
             if self.checkpointer is None:
                 raise RuntimeError("CheckpointerManager 未返回 checkpointer")
 
-            # 传递给 Agent
+            catalog_config = config.catalog
+            control_client = None
+            if catalog_config.enabled:
+                control_client = HttpControlPlaneClient(
+                    base_url=catalog_config.control_base_url,
+                    service_token=SecretStr(catalog_config.main_service_token),
+                    timeout_seconds=catalog_config.control_timeout_seconds,
+                )
+            self.catalog_provider = CatalogProvider(control_client, poll_seconds=catalog_config.poll_seconds)
+            await self.catalog_provider.start()
+            self.sub_agent_runtime_guard = SubAgentRuntimeGuard(
+                failure_threshold=catalog_config.circuit_failure_threshold,
+                recovery_seconds=catalog_config.circuit_recovery_seconds,
+            )
+            self._agent_token_provider = catalog_config.agent_token
+            if control_client is not None:
+                self._citation_recorder = control_client.record_citation
+
+            # 空 Catalog 也必须健康启动；授权视图按请求创建并缓存对应 graph。
             self.agent = MainAgentOrchestrator(
                 enable_memory=config.memory.enabled,
-                checkpointer=self.checkpointer
+                checkpointer=self.checkpointer,
+                sub_agent_registry=SubAgentRegistry([]),
+                sub_agent_runtime_guard=self.sub_agent_runtime_guard,
+                sub_agent_token_provider=self._agent_token_provider,
+                sub_agent_citation_recorder=self._citation_recorder,
             )
             self.initialized = True
             logger.info("MainAgent 初始化完成")
 
     async def cleanup(self):
         """清理资源"""
+        if self.catalog_provider is not None:
+            await self.catalog_provider.close()
+            self.catalog_provider = None
+        self._authorized_agents.clear()
         if self.checkpointer_manager is not None:
             await self.checkpointer_manager.close()
             self.checkpointer_manager = None
@@ -116,7 +160,8 @@ class AgentManager:
         files: Optional[list] = None,
         user_location: Optional[Dict[str, Any]] = None,
         enable_knowledge: bool = False,
-        user_informations: Optional[Dict[str, Any]] = None
+        user_informations: Optional[Dict[str, Any]] = None,
+        trusted_user_id: str | None = None,
     ) -> Dict[str, Any]:
         """执行对话（非流式）"""
         if not self.initialized:
@@ -144,13 +189,14 @@ class AgentManager:
 
         if profiler:
             profiler.start("session_lock_wait")
-        options = ExecutionOptions(execution_key=f"main:{session_id}", wait_for_session=True)
+        options = ExecutionOptions(execution_key=f"main:{user_id}:{session_id}", wait_for_session=True)
         async with self.execution_manager.acquire("agent-main", self._execution_request(user_id, session_id), options):
             if profiler:
                 profiler.stop("session_lock_wait")
             logger.info(f"[{session_id}] 获取 session 锁（非流式）")
 
             try:
+                request_agent, catalog_view = await self._agent_for_request(trusted_user_id)
                 # 构建消息，如果有文件则注入到 additional_kwargs
                 additional_kwargs = {}
                 if files:
@@ -163,7 +209,7 @@ class AgentManager:
                     user_informations=user_informations,
                 )
 
-                result = await self.agent.ainvoke(
+                result = await request_agent.ainvoke(
                     user_input=user_message.content,
                     user_id=user_id,
                     session_id=session_id,
@@ -171,6 +217,8 @@ class AgentManager:
                     additional_kwargs=additional_kwargs,
                     enable_knowledge=enable_knowledge,
                     trace_id=trace_id,
+                    catalog_revision=catalog_view.catalog_revision,
+                    allowed_agent_ids=catalog_view.allowed_agent_ids,
                 )
                 return result
 
@@ -191,7 +239,8 @@ class AgentManager:
         files: Optional[list] = None,
         user_location: Optional[Dict[str, Any]] = None,
         enable_knowledge: bool = False,
-        user_informations: Optional[Dict[str, Any]] = None
+        user_informations: Optional[Dict[str, Any]] = None,
+        trusted_user_id: str | None = None,
     ):
         """执行对话（流式输出，使用 Block Stream V2 协议）"""
         if not self.initialized:
@@ -229,6 +278,7 @@ class AgentManager:
             additional_kwargs=additional_kwargs,
             user_informations=user_informations,
         )
+        request_agent, catalog_view = await self._agent_for_request(trusted_user_id)
 
         normalizer = EventNormalizer(
             session_id=session_id,
@@ -247,7 +297,7 @@ class AgentManager:
         yield normalizer.session_start(model=config.llm.model).to_sse()
 
         execution_options = ExecutionOptions(
-            execution_key=f"main:{session_id}",
+            execution_key=f"main:{user_id}:{session_id}",
             wait_timeout_seconds=STREAM_LOCK_WAIT_TIMEOUT_SECONDS,
             idle_timeout_seconds=STREAM_IDLE_TIMEOUT_SECONDS,
             max_hold_timeout_seconds=STREAM_MAX_HOLD_TIMEOUT_SECONDS,
@@ -271,7 +321,7 @@ class AgentManager:
             try:
                 # 使用 astream_events 获取流式输出
                 logger.info(f"[{session_id}] astream_events() 开始")
-                async for event in self.agent.agent.astream_events(
+                async for event in request_agent.agent.astream_events(
                             {
                                 "messages": [user_message],
                                 "user_id": user_id,
@@ -282,9 +332,11 @@ class AgentManager:
                             },
                             config={
                                 "configurable": {
-                                    "thread_id": session_id,
+                                    "thread_id": f"{user_id}:{session_id}",
                                     "user_id": user_id,
                                     "trace_id": trace_id,
+                                    "catalog_revision": catalog_view.catalog_revision,
+                                    "allowed_agent_ids": tuple(sorted(catalog_view.allowed_agent_ids)),
                                     "ori_query": user_input,  # 传递原始用户输入（未注入时间的）
                                     "user_location": user_location or {}
                                 },
@@ -511,3 +563,78 @@ class AgentManager:
             if profiler:
                 profiler.log_summary(slow_threshold_ms=config.profiling.slow_threshold_ms)
                 profiler.deactivate()
+
+    async def _agent_for_request(self, trusted_user_id: str | None) -> tuple[MainAgentOrchestrator, AuthorizedCatalogView]:
+        """构造请求级授权 graph；Control/授权失败时只返回零 SubAgent 的基础 graph。"""
+        if self.agent is None:
+            raise RuntimeError("Agent 未初始化")
+        provider = self.catalog_provider
+        if provider is None or trusted_user_id is None:
+            snapshot = provider.snapshot if provider is not None else None
+            revision = snapshot.catalog_revision if snapshot is not None else "catalog-unconfigured"
+            checksum = snapshot.catalog_checksum if snapshot is not None else "0" * 64
+            return self.agent, AuthorizedCatalogView(
+                user_id=trusted_user_id or "",
+                catalog_revision=revision,
+                catalog_checksum=checksum,
+                allowed_agent_ids=frozenset(),
+                registry=SubAgentRegistry([]),
+            )
+        try:
+            view = await provider.authorized_view(trusted_user_id)
+        except CatalogUnavailableError:
+            logger.exception("Catalog 或授权解析失败，本次请求不暴露任何 SubAgent")
+            snapshot = provider.snapshot
+            return self.agent, AuthorizedCatalogView(
+                user_id=trusted_user_id,
+                catalog_revision=snapshot.catalog_revision,
+                catalog_checksum=snapshot.catalog_checksum,
+                allowed_agent_ids=frozenset(),
+                registry=SubAgentRegistry([]),
+            )
+        key = (view.catalog_checksum, tuple(sorted(view.allowed_agent_ids)))
+        cached = self._authorized_agents.get(key)
+        if cached is not None:
+            return cached, view
+        if len(self._authorized_agents) >= 64:
+            self._authorized_agents.clear()
+        runtime = MainAgentOrchestrator(
+            enable_memory=self._memory_enabled,
+            checkpointer=self.checkpointer,
+            sub_agent_registry=view.registry,
+            sub_agent_runtime_guard=self.sub_agent_runtime_guard,
+            sub_agent_token_provider=self._agent_token_provider,
+            sub_agent_citation_recorder=self._citation_recorder,
+        )
+        self._authorized_agents[key] = runtime
+        return runtime, view
+
+    async def smoke_sub_agent(self, *, agent_id: str, trusted_user_id: str) -> dict[str, str]:
+        """经请求级 grant/Catalog 投影调用目标工具，供部署后确定性 smoke 使用。"""
+        if not self.initialized or self.catalog_provider is None:
+            raise RuntimeError("MainAgent Catalog 尚未初始化")
+        view = await self.catalog_provider.authorized_view(trusted_user_id)
+        if agent_id not in view.allowed_agent_ids:
+            raise PermissionError("smoke 用户未获目标 Agent 授权")
+        descriptor = view.registry.get_by_agent_id(agent_id)
+        tools = build_sub_agent_tools(
+            SubAgentRegistry([descriptor]),
+            runtime_guard=self.sub_agent_runtime_guard,
+            token_provider=self._agent_token_provider,
+            citation_recorder=self._citation_recorder,
+        )
+        result = await tools[0].ainvoke(
+            {"task": "执行部署后只读健康 smoke，并返回简短成功结果。"},
+            config={
+                "configurable": {
+                    "user_id": trusted_user_id,
+                    "session_id": f"deploy-smoke-{uuid.uuid4().hex}",
+                    "trace_id": f"deploy_smoke_{uuid.uuid4().hex}",
+                    "catalog_revision": view.catalog_revision,
+                    "allowed_agent_ids": tuple(sorted(view.allowed_agent_ids)),
+                }
+            },
+        )
+        if result.startswith("["):
+            raise RuntimeError("目标 Agent smoke 未通过")
+        return {"agent_id": agent_id, "status": "passed"}

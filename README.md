@@ -28,14 +28,14 @@ Muye Multi-Agent Scaffold 是一个基于
 ```text
 Client
   |
-  +-- muye-gateway: 80/443 (可选，仅 /agentMain/ 与 /api/v1/travel/)
+  +-- muye-gateway: 80/443 (可选公网入口)
           |
           +-- agent-main: 9860
                   |
                   +-- muye-llm: 9850 -> OpenAI-compatible 上游
+                  +-- control: 9880 -> Catalog、授权、健康和 citation 投影
                   +-- muye-data: 9840 -> Milvus（可选、只读）
-                  +-- agent-travel: 8011 (internal + public)
-                  +-- agent-order: 8012 (internal only)
+                  +-- agent-<slug>: internal only -> muye-data
 ```
 
 | 服务 | 端口 | 职责 |
@@ -43,6 +43,7 @@ Client
 | `muye-llm` | 9850 | 模型注册、thinking 校验、Chat/SSE/Embedding 网关 |
 | `muye-data` | 9840 | 查询、Dense/Keyword/Hybrid 召回、融合、Rerank 编排与数据库适配 |
 | `agent-main` | 9860 | 对话、SSE、工具调用与子 Agent 编排 |
+| `control` | 9880 | active Catalog、健康状态、User-Agent grant 与 citation 授权投影 |
 | `agent-travel` | 8011 | ReAct 风格旅行参考 Agent |
 | `agent-order` | 8012 | Graph 风格订单参考 Agent，不执行真实交易 |
 | `muye-gateway` | 80/443 | Bearer Token、TLS 与公网路由 allowlist |
@@ -112,7 +113,8 @@ Shell 环境变量 > 当前服务目录 .env > 源码默认值
 `--dry-run` 只检查服务入口和配置，不启动进程；即使没有真实密钥也可用于 CI 结构检查。
 启动器按 `muye-llm -> muye-data（启用时） -> agent-main -> agent-travel -> agent-order -> dashboard-api`
 顺序等待健康检查。`MUYE_DATA_ENABLED=false` 时跳过数据服务，因此默认本地运行不要求
-Milvus。本地控制台位于：
+Milvus。阶段 5 的 Control 与生成 Agent 生命周期是独立部署路径，不由该兼容启动器隐式启动。
+本地控制台位于：
 
 ```text
 http://127.0.0.1:9870/console/online.html
@@ -208,11 +210,34 @@ v2.0 的知识 Agent 由本地、确定性 Generator 生成，首次产物位于
 `knowledge approve-proposal`。完整流程、OCR 依赖、Job 状态和评测发布见
 [知识 Pipeline 与评测](docs/v2.0-knowledge-pipeline.md)。
 
+## Agent Catalog 与部署生命周期
+
+阶段 5 使用 `agent.yaml`、当前源码 checksum 和 `AgentBuildRecordV1` 确定性派生 Catalog 与 Compose aggregate，
+MainAgent 不再从固定 URL 环境变量发现 SubAgent。空 Catalog 可以健康启动；启用部署的 Agent 必须引用阶段 4
+active Resource Snapshot 中已经发布的逻辑 Resource。
+
+```bash
+./scripts/muye.sh agent list
+./scripts/muye.sh agent build <agent-slug> --base-image '<image>@sha256:<digest>'
+./scripts/muye.sh agent sync
+./scripts/muye.sh agent sync --check
+./scripts/muye.sh agent deploy <agent-slug>
+./scripts/muye.sh agent stop <agent-slug>
+./scripts/muye.sh agent rollback <agent-slug> --build-record <build-record-id>
+```
+
+`agent build` 先运行生成 Agent 的 compile/test，再构建镜像并记录本机 Docker 内容摘要。`deploy` 依次确认本机镜像、
+启动目标服务、提交 Control candidate、等待 Main ACK，并通过已授权用户执行 Main -> Sub smoke；`stop` 的顺序相反，
+先从 Catalog 移除并等待 ACK，再停止容器。当前阶段不向 registry 发布 manifest，真实 Docker build/deploy/rollback
+必须在具备 Docker daemon、Control/Main、有效 grant 和三类独立服务 token 的目标环境验证。完整配置、产物归属、grant
+格式和故障语义见 [Agent Catalog、权限与部署](docs/v2.0-agent-catalog.md)。
+
 ## 安全边界
 
 - `agent-order` 仅用于 Graph 和协议演示，不执行真实下单。
 - `muye-data` 与 `muye-llm` 只允许可信内网服务访问；数据库账号必须限制为只读权限。
 - `muye-data` 不负责创建或修改 Collection、Index、表、文档与向量。
+- 生产必须启用 Data Agent 身份校验；同一 Agent 的 Main、Control、Data token 必须非空且互不相同。
 - 生产 Nginx 只公开 `/agentMain/` 与 `/api/v1/travel/`。
 
 项目许可证：[MIT](LICENSE)。内置前端资源及迁移代码的许可证见

@@ -77,3 +77,5 @@ docker-compose.override.yml
 # Knowledge Worker 的运行时 Job/报告可重建；Proposal、Manifest 和 Snapshot 可提交审阅。
 /config/generated/knowledge-jobs/
 /config/generated/knowledge-reports/
+# Control 的 active Catalog、grant、ACK 与健康状态是运行时投影，不提交 Git。
+/config/runtime/
