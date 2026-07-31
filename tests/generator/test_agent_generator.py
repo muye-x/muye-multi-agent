@@ -11,12 +11,19 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
 from tools.agent_generator import AgentGenerator, GeneratorPaths
+from tools.agent_generator.approvals import write_approval
 from tools.agent_generator.checksums import canonical_checksum, read_source_tree
 from tools.agent_generator.generator import _semver_sort_key
 from tools.agent_generator.io import load_yaml_model
-from tools.agent_generator.models import AgentProfileInputV1, AgentProfileProposalV1
+from tools.agent_generator.models import (
+    AgentProfileInputV1,
+    AgentProfileProposalV1,
+    GenerationApprovalV1,
+    KnowledgeGenerationInputV1,
+)
 from tools.cli import main as cli_main
 
 
@@ -100,6 +107,101 @@ def test_generated_agent_compiles_imports_and_runs_its_template_contract(tmp_pat
     assert result.returncode == 0, result.stdout + result.stderr
     _load_generated_module(target / "agent.py")
     assert _generator(tmp_path).validate(slug="product-handbook").source_drift is False
+
+
+@pytest.mark.parametrize(
+    ("slug", "resource_id", "pipeline", "scope_field", "return_fields", "tool_budget"),
+    [
+        ("policy-library", "kb.policy_library", "hybrid", "tenant_id", ["title", "section", "citation_id"], 4),
+        ("support-playbook", "kb.support_playbook", "dense", "product_line", ["title", "severity", "source_locator"], 7),
+        ("api-reference", "kb.api_reference", "sparse", "api_version", ["endpoint", "method", "citation_id"], 5),
+    ],
+)
+def test_template_generates_for_distinct_approved_knowledge_structures(
+    tmp_path: Path,
+    slug: str,
+    resource_id: str,
+    pipeline: str,
+    scope_field: str,
+    return_fields: list[str],
+    tool_budget: int,
+) -> None:
+    """发布门禁覆盖不同 scope、字段和检索策略，而非只验证单一手册 fixture。"""
+    config_root = tmp_path / "config"
+    shutil.copytree(FIXTURE_CONFIG_ROOT, config_root)
+    base_knowledge = yaml.safe_load((config_root / "knowledge" / "product-handbook.yaml").read_text(encoding="utf-8"))
+    base_profile = yaml.safe_load((config_root / "agents" / "product-handbook.yaml").read_text(encoding="utf-8"))
+    resource_checksum = canonical_checksum({"resource": resource_id})
+    skill_checksum = canonical_checksum({"skill": slug, "pipeline": pipeline})
+    base_knowledge.update(
+        {
+            "knowledge_slug": slug,
+            "resource_id": resource_id,
+            "resource_revision": f"resource/{slug}@1",
+            "resource_checksum": resource_checksum,
+            "skill_revision": f"skill_{slug.replace('-', '_')}@1",
+            "skill_checksum": skill_checksum,
+            "retrieval_pipeline": pipeline,
+            "scope_filter_ref": f"scope/{slug}@1",
+            "fixed_scope_filter": {"op": "eq", "field": scope_field, "value": resource_id},
+            "allowed_filter_fields": [scope_field],
+            "allowed_return_fields": return_fields,
+            "tool_budget": tool_budget,
+            "token_budget": 4096 + tool_budget * 256,
+            "timeout_budget_seconds": 20 + tool_budget,
+            "evaluation_set_ref": f"evaluation/{slug}@1",
+        }
+    )
+    base_profile.update(
+        {
+            "agent_id": f"agent_{slug.replace('-', '_')}",
+            "slug": slug,
+            "profile_revision": f"profile/{slug}@1",
+        }
+    )
+    base_profile["profile"].update(
+        {
+            "display_name": f"{slug} knowledge assistant",
+            "description": f"Answers approved questions from {resource_id}.",
+            "supported_intents": [f"{slug} lookup"],
+            "instructions": f"Answer only from the approved {slug} knowledge resource.",
+            "do_not_use_when": ["The requested information is outside the approved resource."],
+        }
+    )
+    (config_root / "knowledge" / f"{slug}.yaml").write_text(
+        yaml.safe_dump(base_knowledge, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    (config_root / "agents" / f"{slug}.yaml").write_text(
+        yaml.safe_dump(base_profile, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    knowledge = load_yaml_model(config_root / "knowledge" / f"{slug}.yaml", KnowledgeGenerationInputV1)
+    profile = load_yaml_model(config_root / "agents" / f"{slug}.yaml", AgentProfileInputV1)
+    for subject_type, revision, checksum in (
+        ("resource", knowledge.resource_revision, knowledge.resource_checksum),
+        ("skill", knowledge.skill_revision, knowledge.skill_checksum),
+        ("profile", profile.profile_revision, canonical_checksum(profile.profile.model_dump(mode="json"))),
+    ):
+        write_approval(
+            config_root,
+            GenerationApprovalV1(
+                schema_version="muye.ai/generation-approval/v1",
+                subject_type=subject_type,
+                subject_slug=slug,
+                revision=revision,
+                checksum=checksum,
+                approved_at="2026-07-31T00:00:00Z",
+                approved_by="release_reviewer",
+            ),
+        )
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    generator = _generator_with_config(workspace_root, config_root)
+    result = generator.generate(slug=slug, knowledge_slug=slug)
+
+    assert result.descriptor.agent_id == profile.agent_id
+    assert result.descriptor.resources[0].resource_id == resource_id
+    assert generator.validate(slug=slug).source_drift is False
+    _load_generated_module(result.directory / "agent.py")
 
 
 def test_existing_directory_is_never_overwritten_after_developer_takeover(tmp_path: Path) -> None:

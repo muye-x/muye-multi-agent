@@ -3,21 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
-import subprocess
-import textwrap
 from collections.abc import Mapping
-from pathlib import Path
 
 import httpx
 import pytest
 
 from dashboard_api.app import ServiceDefinition, _service_definitions, create_app
-
-WEB_ROOT = Path(__file__).resolve().parents[2] / "dashboard" / "web"
-LUCIDE_CDN_URL = "https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"
-LUCIDE_INTEGRITY = "sha384-uTYyvsSSUZeaPhb5RbKlQa0zY/WpX/QHfvg2mczXyBQOpkWPEDy9lczyp+w7SKXu"
-
 
 def _get(app: object, path: str) -> httpx.Response:
     """通过 ASGI transport 发起无网络请求，避免同步 TestClient 的版本耦合。"""
@@ -42,10 +33,10 @@ def test_services_exposes_health_and_capability_profiles() -> None:
     app = create_app(
         (
             ServiceDefinition(
-                "travel",
-                "Travel",
+                "product-handbook",
+                "Product handbook",
                 "agent",
-                "http://travel.test",
+                "http://product.test",
                 supports_capabilities=True,
                 default_profiles=("internal",),
             ),
@@ -60,23 +51,6 @@ def test_services_exposes_health_and_capability_profiles() -> None:
     assert service["online"] is True
     assert service["profiles"] == ["internal", "public"]
     assert service["capability_available"] is True
-    assert "/console" in {route.path for route in app.routes}
-
-    console = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
-    assert "Muye 运维控制台" in console
-    assert "online.html" in console
-    assert 'target="_blank"' in console
-    assert "模型、协议与运行时" in console
-    assert "marked@15.0.7" not in console
-    assert "gateway-token" not in console
-    assert "输入 Token 后加载状态" not in console
-
-    online_console = (WEB_ROOT / "online.html").read_text(encoding="utf-8")
-    assert "Muye 在线体验" in online_console
-    assert "marked@15.0.7" in online_console
-    assert "dompurify@3.2.4" in online_console
-    assert "stop-button" in online_console
-    assert "send-button" in online_console
 
 
 def test_services_marks_unreachable_service_offline() -> None:
@@ -105,89 +79,3 @@ def test_data_service_is_listed_only_when_enabled(monkeypatch: pytest.MonkeyPatc
     data_service = next(item for item in definitions if item.service_id == "muye-data")
     assert data_service.kind == "data"
     assert data_service.default_profiles == ("internal", "read-only")
-
-
-def test_console_uses_pinned_lucide_cdn() -> None:
-    """控制台应从经过完整性校验的固定版本 CDN 加载图标。"""
-
-    for page_name in ("index.html", "online.html"):
-        page = (WEB_ROOT / page_name).read_text(encoding="utf-8")
-        assert f'src="{LUCIDE_CDN_URL}"' in page
-        assert f'integrity="{LUCIDE_INTEGRITY}"' in page
-        assert 'crossorigin="anonymous"' in page
-
-    assert not (WEB_ROOT / "lucide.js").exists()
-
-
-def test_online_console_renders_sse_blocks_separately() -> None:
-    """不同 block ID 的增量必须写入独立消息块，不能直接拼接。"""
-
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for the dashboard JavaScript behavior test")
-
-    app_js = WEB_ROOT / "app.js"
-    script = textwrap.dedent(
-        r"""
-        const assert = require("node:assert/strict");
-        const fs = require("node:fs");
-        const vm = require("node:vm");
-
-        class FakeNode {
-          constructor() { this.children = []; this.className = ""; this.dataset = {}; this.textContent = ""; }
-          append(...nodes) { this.children.push(...nodes); }
-          replaceChildren(...nodes) { this.children = [...nodes]; }
-        }
-
-        const source = fs.readFileSync(process.argv[1], "utf8");
-        const document = {
-          body: { dataset: { page: "test" } },
-          documentElement: { scrollHeight: 0 },
-          createElement: () => new FakeNode(),
-          querySelector: () => null,
-          querySelectorAll: () => [],
-        };
-        const window = { addEventListener() {}, lucide: null, marked: null, scrollTo() {} };
-        const sandbox = {
-          AbortController,
-          TextDecoder,
-          cancelAnimationFrame() {},
-          document,
-          fetch: async () => ({ json: async () => ({ generated_at: 0, services: [] }), ok: true }),
-          requestAnimationFrame: () => 1,
-          setInterval: () => 0,
-          window,
-        };
-        vm.runInNewContext(`${source}\n;globalThis.testApi = { renderMessageBlocks, updateMessageBlock };`, sandbox);
-
-        const message = { content: "", blocks: [] };
-        assert.equal(sandbox.testApi.updateMessageBlock(message, { id: "b1", type: "markdown", delta: "好的，" }), true);
-        sandbox.testApi.updateMessageBlock(message, { id: "b1", type: "markdown", delta: "先搜索攻略" });
-        sandbox.testApi.updateMessageBlock(message, { id: "b2", type: "markdown", delta: "以下是" });
-        sandbox.testApi.updateMessageBlock(message, { id: "b2", type: "markdown", delta: "完整方案" });
-
-        assert.deepEqual(JSON.parse(JSON.stringify(message.blocks)), [
-          { id: "b1", type: "markdown", content: "好的，先搜索攻略" },
-          { id: "b2", type: "markdown", content: "以下是完整方案" },
-        ]);
-        assert.equal(message.content, "好的，先搜索攻略\n\n以下是完整方案");
-
-        const container = new FakeNode();
-        sandbox.testApi.renderMessageBlocks(container, message.blocks, message.content);
-        assert.equal(container.children.length, 2);
-        assert.equal(container.children[0].dataset.blockId, "b1");
-        assert.equal(container.children[0].textContent, "好的，先搜索攻略");
-        assert.equal(container.children[1].dataset.blockId, "b2");
-        assert.equal(container.children[1].textContent, "以下是完整方案");
-        """
-    )
-
-    completed = subprocess.run(
-        [node, "-e", script, str(app_js)],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )
-
-    assert completed.returncode == 0, completed.stderr

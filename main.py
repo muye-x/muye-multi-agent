@@ -97,28 +97,6 @@ SERVICES: list[dict] = [
         "log_color": "\033[93m",
     },
     {
-        "id": 3,
-        "name": "agent-travel · 旅行参考服务",
-        "cwd": "agents/agent-travel",
-        "cmd": [PYTHON_BIN, "main.py"],
-        "port": 8011,
-        "health_url": "http://127.0.0.1:8011/health",
-        "bind_host": "127.0.0.1",
-        "log_label": "TRAVEL",
-        "log_color": "\033[92m",
-    },
-    {
-        "id": 4,
-        "name": "agent-order · Graph 参考服务",
-        "cwd": "agents/agent-order",
-        "cmd": [PYTHON_BIN, "main.py"],
-        "port": 8012,
-        "health_url": "http://127.0.0.1:8012/health",
-        "bind_host": "127.0.0.1",
-        "log_label": "ORDER",
-        "log_color": "\033[95m",
-    },
-    {
         "id": 5,
         "name": "muye-gateway · 运维控制台",
         "cwd": "muye-gateway",
@@ -550,9 +528,7 @@ def _print_ready_guide(services: Sequence[Mapping[str, object]]) -> None:
 {_c(BOLD, "服务端口：")}
   9850 — muye-llm
 {data_port}  9860 — Main Agent
-  8011 — Travel Agent
-  8012 — Order Agent
-  9870 — Gateway 运维控制台（本地：http://127.0.0.1:9870/console/）
+  9870 — Gateway 内部认证与状态 API
 
 {_c(BOLD, "调用入口：")}
     curl -N -X POST http://127.0.0.1:9860/api/v1/chat/stream \\

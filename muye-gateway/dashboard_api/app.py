@@ -17,8 +17,6 @@ from typing import Literal
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Response
-from fastapi.responses import RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -240,21 +238,8 @@ def create_app(
 
     @app.get("/services", response_model=DashboardResponse)
     async def list_services() -> DashboardResponse:
-        """供 Nginx ``/console/api/`` 反代后的服务状态接口。"""
+        """供内部诊断和 Gateway 反代链路读取的服务状态接口。"""
         return await dashboard_snapshot()
-
-    @app.get("/console/api/services", response_model=DashboardResponse, include_in_schema=False)
-    async def local_list_services() -> DashboardResponse:
-        """供本地一键启动时控制台同进程访问的服务状态接口。"""
-        return await dashboard_snapshot()
-
-    @app.get("/", include_in_schema=False)
-    async def root() -> RedirectResponse:
-        """本地启动时将根路径引导到控制台。"""
-        return RedirectResponse(url="/console/")
-
-    static_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard", "web")
-    app.mount("/console", StaticFiles(directory=static_root, html=True), name="console")
 
     return app
 

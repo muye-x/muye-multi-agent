@@ -120,5 +120,5 @@ class SubAgentRegistry:
 
 
 def build_default_registry() -> SubAgentRegistry:
-    """阶段 5 默认允许空 Catalog 启动，不再从 Travel/Order URL 环境变量发现 Agent。"""
+    """允许空 Catalog 启动；SubAgent 只能由经验证的 Catalog 发现。"""
     return SubAgentRegistry([])

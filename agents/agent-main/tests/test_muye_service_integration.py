@@ -14,8 +14,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [
     str(ROOT / "agents" / "agent-main"),
-    str(ROOT / "agents" / "agent-travel"),
-    str(ROOT / "agents" / "agent-order"),
 ]
 
 from muye_multi_agent_sdk.integrations.muye_llm import MuyeLlmChatModel
@@ -131,7 +129,7 @@ def test_main_chat_stream_projects_one_sub_agent_lifecycle(monkeypatch: pytest.M
             },
             {
                 "event": "on_tool_start",
-                "name": "travel",
+                "name": "product_help",
                 "tags": ["muye:sub-agent"],
                 "data": {"input": {"task": "西安三日游"}},
             },
@@ -142,7 +140,7 @@ def test_main_chat_stream_projects_one_sub_agent_lifecycle(monkeypatch: pytest.M
                         "custom",
                         {
                             "tool_id": "sub_agent_fixed",
-                            "tool_name": "travel",
+                            "tool_name": "product_help",
                             "status": "start",
                             "input": {"task": "西安三日游"},
                         },
@@ -156,7 +154,7 @@ def test_main_chat_stream_projects_one_sub_agent_lifecycle(monkeypatch: pytest.M
                         "custom",
                         {
                             "tool_id": "sub_agent_fixed",
-                            "tool_name": "travel",
+                            "tool_name": "product_help",
                             "status": "result",
                             "blocks": [{"id": "child-b1", "type": "markdown", "content": "行程"}],
                         },
@@ -170,7 +168,7 @@ def test_main_chat_stream_projects_one_sub_agent_lifecycle(monkeypatch: pytest.M
                         "custom",
                         {
                             "tool_id": "sub_agent_fixed",
-                            "tool_name": "travel",
+                            "tool_name": "product_help",
                             "status": "complete",
                             "duration_ms": 20,
                         },
@@ -179,7 +177,7 @@ def test_main_chat_stream_projects_one_sub_agent_lifecycle(monkeypatch: pytest.M
             },
             {
                 "event": "on_tool_end",
-                "name": "travel",
+                "name": "product_help",
                 "tags": ["muye:sub-agent"],
                 "data": {"output": "行程"},
             },
@@ -244,13 +242,13 @@ def test_child_tool_events_keep_distinct_progress_meaning() -> None:
     _forward_child_event(
         forwarded.append,
         "sub_agent_fixed",
-        "travel",
+        "product_help",
         {"event": "tool", "data": {"name": "sample_itinerary", "status": "start"}},
     )
     _forward_child_event(
         forwarded.append,
         "sub_agent_fixed",
-        "travel",
+        "product_help",
         {"event": "tool", "data": {"name": "sample_itinerary", "status": "complete"}},
     )
 
@@ -336,12 +334,12 @@ def test_main_sub_agent_caller_negotiates_then_invokes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/capabilities":
-                return httpx.Response(200, json={"agent_name": "travel-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True, "features": ["trusted_deadline"]})
+                return httpx.Response(200, json={"agent_name": "product-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True, "features": ["trusted_deadline"]})
         return httpx.Response(200, json={"status": "success", "payload": {"result_data": {"markdown": "ok"}}})
 
     async def run() -> None:
         caller = SubAgentCaller(lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs))
-        result = await caller.invoke(SubAgentDescriptor("travel", "http://travel.test", 2), task="成都三日游", user_id="u1", session_id="s1")
+        result = await caller.invoke(SubAgentDescriptor("product_help", "http://product.test", 2), task="查询产品手册", user_id="u1", session_id="s1")
         assert result["status"] == "success"
 
     asyncio.run(run())
@@ -363,7 +361,7 @@ def test_main_sub_agent_stream_filters_child_session_envelope() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/capabilities":
-                return httpx.Response(200, json={"agent_name": "travel-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True, "features": ["trusted_deadline"]})
+                return httpx.Response(200, json={"agent_name": "product-agent", "internal_protocol_version": "muye-agent-internal/3.0", "api_profiles": ["internal"], "supports_streaming": True, "features": ["trusted_deadline"]})
         return httpx.Response(200, text=stream_body, headers={"content-type": "text/event-stream"})
 
     async def run() -> None:
@@ -371,7 +369,7 @@ def test_main_sub_agent_stream_filters_child_session_envelope() -> None:
         events = [
             event
             async for event in caller.stream(
-                SubAgentDescriptor("travel", "http://travel.test", 2),
+                SubAgentDescriptor("product_help", "http://product.test", 2),
                 task="成都三日游",
                 user_id="u1",
                 session_id="s1",
@@ -384,7 +382,7 @@ def test_main_sub_agent_stream_filters_child_session_envelope() -> None:
 
 
 def test_sub_agent_tools_expose_only_catalog_descriptions() -> None:
-    """工具描述只能来自当前授权 Catalog，不能依赖固定 Travel/Order 文案。"""
+    """工具描述只能来自当前授权 Catalog，不能依赖任何固定示例文案。"""
     tools = build_sub_agent_tools(
         SubAgentRegistry(
             [
@@ -403,7 +401,7 @@ def test_sub_agent_tools_expose_only_catalog_descriptions() -> None:
     assert set(descriptions) == {"product_help"}
     assert "查询已发布产品手册" in descriptions["product_help"]
     assert "产品功能咨询" in descriptions["product_help"]
-    assert "travel" not in str(descriptions).lower()
+    assert "legacy" not in str(descriptions).lower()
 
     assert all("muye:sub-agent" in (tool.tags or []) for tool in tools)
 
@@ -417,7 +415,7 @@ def test_sub_agent_tool_forwards_runtime_identity(monkeypatch: pytest.MonkeyPatc
         yield {"event": "block", "data": {"content": "ok"}}
 
     monkeypatch.setattr(SubAgentCaller, "stream", fake_stream)
-    tool = build_sub_agent_tools(SubAgentRegistry([SubAgentDescriptor("travel", "http://travel.test", 2)]))[0]
+    tool = build_sub_agent_tools(SubAgentRegistry([SubAgentDescriptor("product_help", "http://product.test", 2)]))[0]
 
     async def run() -> str:
         return await tool.ainvoke(
@@ -437,7 +435,7 @@ def test_sub_agent_tool_tag_propagates_to_langchain_events(monkeypatch: pytest.M
 
     monkeypatch.setattr(SubAgentCaller, "stream", fake_stream)
     tool = build_sub_agent_tools(
-        SubAgentRegistry([SubAgentDescriptor("travel", "http://travel.test", 2)])
+        SubAgentRegistry([SubAgentDescriptor("product_help", "http://product.test", 2)])
     )[0]
 
     async def run() -> list[dict[str, object]]:
@@ -484,8 +482,7 @@ def test_system_prompt_contains_only_authorized_catalog_agents(
 
     assert "`product_help`" in prompt
     assert "产品咨询" in prompt
-    assert "travel" not in prompt.lower()
-    assert "order" not in prompt.lower()
+    assert "legacy-agent" not in prompt.lower()
 
 
 def test_main_sub_agent_caller_forwards_cancel() -> None:
@@ -500,7 +497,7 @@ def test_main_sub_agent_caller_forwards_cancel() -> None:
     async def run() -> None:
         caller = SubAgentCaller(lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs))
         result = await caller.cancel(
-            SubAgentDescriptor("travel", "http://travel.test", 2),
+            SubAgentDescriptor("product_help", "http://product.test", 2),
             user_id="u1",
             session_id="s1",
             trace_id="t1",

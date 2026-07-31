@@ -44,8 +44,6 @@ Client
 | `muye-data` | 9840 | 查询、Dense/Keyword/Hybrid 召回、融合、Rerank 编排与数据库适配 |
 | `agent-main` | 9860 | 对话、SSE、工具调用与子 Agent 编排 |
 | `control` | 9880 | active Catalog、健康状态、User-Agent grant 与 citation 授权投影 |
-| `agent-travel` | 8011 | ReAct 风格旅行参考 Agent |
-| `agent-order` | 8012 | Graph 风格订单参考 Agent，不执行真实交易 |
 | `muye-gateway` | 80/443 | Bearer Token、TLS 与公网路由 allowlist |
 
 ## 依赖
@@ -73,8 +71,6 @@ python3 -m venv .venv
 | `muye-llm/.env.example` | LLM、Embedding 与可选 LangSmith 配置 | 单独部署 `muye-llm` |
 | `muye-data/.env.example` | 只读数据服务、资源配置文件与数据库凭据引用 | 单独部署 `muye-data` |
 | `agents/agent-main/.env.example` | 主 Agent、存储、检索与子 Agent 地址 | 单独部署 `agent-main` |
-| `agents/agent-travel/.env.example` | Travel Agent 与 SDK 配置 | 单独部署 `agent-travel` |
-| `agents/agent-order/.env.example` | Order Agent 与 SDK 配置 | 单独部署 `agent-order` |
 | `muye-gateway/.env.example` | Nginx、TLS、Gateway 与控制台配置 | 单独部署 Gateway |
 
 本地一键启动只需创建根目录 `.env`：
@@ -111,14 +107,10 @@ Shell 环境变量 > 当前服务目录 .env > 源码默认值
 ```
 
 `--dry-run` 只检查服务入口和配置，不启动进程；即使没有真实密钥也可用于 CI 结构检查。
-启动器按 `muye-llm -> muye-data（启用时） -> agent-main -> agent-travel -> agent-order -> dashboard-api`
+启动器按 `muye-llm -> muye-data（启用时） -> agent-main -> dashboard-api`
 顺序等待健康检查。`MUYE_DATA_ENABLED=false` 时跳过数据服务，因此默认本地运行不要求
 Milvus。阶段 5 的 Control 与生成 Agent 生命周期是独立部署路径，不由该兼容启动器隐式启动。
-本地控制台位于：
-
-```text
-http://127.0.0.1:9870/console/online.html
-```
+生产控制台由 Gateway 提供；本地 `dashboard-api` 仅用于内部认证与状态探测。
 
 ### 方式二：独立启动或部署单个服务
 
@@ -131,15 +123,7 @@ cp .env.example .env
 ../.venv/bin/python main.py
 ```
 
-Agent 服务采用相同方式，例如单独启动 Travel：
-
-```bash
-cd agents/agent-travel
-cp .env.example .env
-../../.venv/bin/python main.py
-```
-
-其他服务的完整命令与部署边界见各自目录的 README。Gateway 的 `.env` 主要由
+生成的 Agent 通过 `scripts/muye.sh agent deploy <slug>` 进入同一个 Compose project。Gateway 的 `.env` 主要由
 `scripts/render-nginx-config.sh` 读取以生成 Nginx 配置；本地 Dashboard API 可直接使用默认值
 或由进程环境注入 `MUYE_DASHBOARD_*`。
 
@@ -152,8 +136,7 @@ cp .env.example .env
 session_start -> block/tool/thinking -> done -> session_end
 ```
 
-同一 `block.id` 的 `delta` 按到达顺序追加；不同 block ID 必须独立处理。Travel 注册 public
-profile，Order 仅注册 internal profile。
+同一 `block.id` 的 `delta` 按到达顺序追加；不同 block ID 必须独立处理。所有生成 SubAgent 仅使用 internal profile。
 
 `muye-data` 只公开 `/api/v1/retrieve`、已知资源 capabilities、`/health` 和 `/ready`。
 Agent 通过 SDK 的 `DataClient` 按需调用逻辑 resource alias；不存在公开 `search` 或任何建库、
@@ -172,8 +155,6 @@ PYTHONPATH=muye-data \
   .venv/bin/python -m pytest -q muye-data/tests
 PYTHONPATH=agents/agent-main \
   .venv/bin/python -m pytest -q agents/agent-main/tests
-PYTHONPATH=agents/agent-travel:agents/agent-order \
-  .venv/bin/python -m pytest -q agents/agent-travel/tests agents/agent-order/tests
 .venv/bin/python -m pytest -q tests
 .venv/bin/python main.py --dry-run
 ```
@@ -232,13 +213,19 @@ active Resource Snapshot 中已经发布的逻辑 Resource。
 必须在具备 Docker daemon、Control/Main、有效 grant 和三类独立服务 token 的目标环境验证。完整配置、产物归属、grant
 格式和故障语义见 [Agent Catalog、权限与部署](docs/v2.0-agent-catalog.md)。
 
+## v2.0 运维与迁移
+
+- [迁移指南](docs/v2.0-migration.md)：从固定示例迁移到经审批的生成 Agent。
+- [管理员指南](docs/v2.0-admin-guide.md)：初始化用户、grant 与状态判断。
+- [运维指南](docs/v2.0-operations.md)：Compose、备份恢复和发布前验证。
+- [发布检查表](docs/v2.0-release-checklist.md)：Alpha、RC 和正式版本门禁。
+
 ## 安全边界
 
-- `agent-order` 仅用于 Graph 和协议演示，不执行真实下单。
 - `muye-data` 与 `muye-llm` 只允许可信内网服务访问；数据库账号必须限制为只读权限。
 - `muye-data` 不负责创建或修改 Collection、Index、表、文档与向量。
 - 生产必须启用 Data Agent 身份校验；同一 Agent 的 Main、Control、Data token 必须非空且互不相同。
-- 生产只公开 Gateway 的 Web、`/api/v2/` 与 `/agentMain/`；登录会话由 Control 校验，Travel/Order 与所有 SubAgent 均不暴露公网端口。
+- 生产只公开 Gateway 的 Web、`/api/v2/` 与 `/agentMain/`；登录会话由 Control 校验，所有 SubAgent 均不暴露公网端口。
 
 项目许可证：[MIT](LICENSE)。内置前端资源及迁移代码的许可证见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

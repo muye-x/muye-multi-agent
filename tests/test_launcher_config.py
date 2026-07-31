@@ -147,8 +147,6 @@ def test_each_service_provides_safe_environment_example() -> None:
         project_root / "muye-llm" / ".env.example",
         project_root / "muye-data" / ".env.example",
         project_root / "agents" / "agent-main" / ".env.example",
-        project_root / "agents" / "agent-travel" / ".env.example",
-        project_root / "agents" / "agent-order" / ".env.example",
         project_root / "muye-gateway" / ".env.example",
     ]
     sensitive_names = {
@@ -156,15 +154,12 @@ def test_each_service_provides_safe_environment_example() -> None:
         "MUYE_LLM_EMBED_API_KEY",
         "MUYE_LLM_RERANK_API_KEY",
         "MUYE_DATA_MILVUS_TOKEN",
-        "MUYE_DATA_OPENSEARCH_USERNAME",
-        "MUYE_DATA_OPENSEARCH_PASSWORD",
         "LANGSMITH_API_KEY",
         "LANGSEARCH_API_KEY",
         "TAVILY_API_KEY",
         "INFOQUEST_API_KEY",
         "SERPER_API_KEY",
         "JINA_API_KEY",
-        "MUYE_GATEWAY_API_KEY",
     }
 
     for example in examples:
@@ -172,6 +167,22 @@ def test_each_service_provides_safe_environment_example() -> None:
         values = dotenv_values(example)
         for name in sensitive_names & values.keys():
             assert not values[name], f"{example} 中的 {name} 必须留空"
+
+
+def test_fixed_business_agent_directories_and_configuration_are_removed() -> None:
+    """v2.0 只能从受审计 Catalog 发现 SubAgent，不能保留固定业务入口。"""
+    project_root = Path(__file__).resolve().parents[1]
+    assert not (project_root / "agents" / "agent-travel").exists()
+    assert not (project_root / "agents" / "agent-order").exists()
+    runtime_sources = (
+        project_root / "main.py",
+        project_root / ".env.example",
+        project_root / "muye-gateway" / ".env.example",
+    )
+    forbidden = ("MUYE_AGENT_TRAVEL", "MUYE_AGENT_ORDER", "agent-travel", "agent-order")
+    for source in runtime_sources:
+        content = source.read_text(encoding="utf-8")
+        assert not any(value in content for value in forbidden), source
 
 
 def test_data_service_is_disabled_by_default() -> None:

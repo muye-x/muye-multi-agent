@@ -26,8 +26,8 @@ cd agents/agent-main
 配置，并默认使用 SQLite、关闭记忆功能。`MEMORY_ENABLED=false` 会完全关闭记忆中间件，因而
 不会连接 Redis、MongoDB 或 evermemOS。包含 API Key、Token 或数据库连接串的 `.env`
 仅供本地运行，不得提交。
-常用服务地址为 `MUYE_LLM_BASE_URL`、`MUYE_AGENT_TRAVEL_URL` 和
-`MUYE_AGENT_ORDER_URL`；实际可用配置以 `config/` 与部署环境为准。
+常用服务地址为 `MUYE_LLM_BASE_URL` 和 `MUYE_CONTROL_BASE_URL`；可调用的 SubAgent 仅来自
+Control 的 active Catalog 与本次用户 grant 的交集。
 
 ## HTTP 接口
 

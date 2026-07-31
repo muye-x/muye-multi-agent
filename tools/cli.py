@@ -9,6 +9,7 @@ from typing import Sequence
 
 from .agent_generator.cli import add_agent_parser
 from .knowledge_cli import add_knowledge_parser
+from . import release_gate
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,6 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     add_knowledge_parser(subparsers)
     add_agent_parser(subparsers)
+    release = subparsers.add_parser("release", help="验证 Alpha/RC/正式发布冻结证据")
+    release.add_argument("release_args", nargs=argparse.REMAINDER)
+    release.set_defaults(handler=lambda arguments, root: release_gate.main(arguments.release_args, workspace_root=root))
     return parser
 
 

@@ -46,7 +46,6 @@ jobs:
       - run: PYTHONPATH=muye-llm:muye-gateway python -m pytest -q muye-llm/tests muye-gateway/dashboard_api/tests
       - run: PYTHONPATH=muye-data python -m pytest -q muye-data/tests
       - run: PYTHONPATH=agents/agent-main python -m pytest -q agents/agent-main/tests
-      - run: PYTHONPATH=agents/agent-travel:agents/agent-order python -m pytest -q agents/agent-travel/tests agents/agent-order/tests
       - run: python -m contracts.export_schemas
       - run: git diff --exit-code -- contracts/schemas
       - run: PYTHONPATH=. python -m pytest -q tests/contract tests/phase1
@@ -55,7 +54,7 @@ jobs:
       - run: python -m pytest -q tests
       - run: test -z "$(git status --porcelain)"
       - run: python -m pip check
-      - run: python -m compileall -q contracts control_server poc/phase1 tools tests/contract tests/phase1 tests/generator tests/template tests/catalog tests/control tests/fixtures muye-llm/src muye-data agents/agent-main agents/agent-travel agents/agent-order muye-gateway/dashboard_api
+      - run: python -m compileall -q contracts control_server poc/phase1 tools tests/contract tests/phase1 tests/generator tests/template tests/catalog tests/control tests/fixtures muye-llm/src muye-data agents/agent-main muye-gateway/dashboard_api
       - run: python main.py --dry-run
 
   workspace-hygiene:
