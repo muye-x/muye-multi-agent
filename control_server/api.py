@@ -91,14 +91,16 @@ def create_app(
             raise HTTPException(status_code=404, detail="Gateway introspection 未启用")
         _require_bearer(authorization, gateway_token)
 
-    def current_principal(authorization: str | None = Header(default=None)) -> Principal:
+    async def current_principal(authorization: str | None = Header(default=None)) -> Principal:
+        """在 ASGI 请求协程内校验 access token，失败时统一拒绝会话。"""
         token = _bearer_token(authorization)
         principal = identities.introspect(token) if token else None
         if principal is None:
             raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_ERROR", "message": "登录会话无效"})
         return principal
 
-    def require_admin(principal: Principal = Depends(current_principal)) -> Principal:
+    async def require_admin(principal: Principal = Depends(current_principal)) -> Principal:
+        """仅允许唯一内置 Admin 使用管理投影和 grant 写接口。"""
         if not principal.is_admin:
             raise HTTPException(status_code=403, detail={"code": "AUTHORIZATION_ERROR", "message": "需要管理员权限"})
         return principal
@@ -127,8 +129,10 @@ def create_app(
         return AccessTokenResponse(access_token=tokens.access_token, expires_at=tokens.expires_at.isoformat())
 
     @app.post("/api/v2/auth/logout", status_code=204)
-    async def logout(response: Response, authorization: str | None = Header(default=None)) -> Response:
+    async def logout(authorization: str | None = Header(default=None)) -> Response:
+        """撤销当前 access session，并明确返回可完成的 204 ASGI 响应。"""
         identities.logout(_bearer_token(authorization))
+        response = Response(status_code=204)
         response.delete_cookie("muye_refresh", path="/api/v2/auth")
         return response
 
