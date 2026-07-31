@@ -9,6 +9,7 @@ from contracts.models import AgentCatalogEntryV1, ResourceBindingV1
 from control_server.catalog import CatalogProjection
 from control_server.health import AgentHealthCollector, CatalogCandidateError
 from control_server.main import _agent_token
+from control_server.identity import InMemoryIdentityStore
 from control_server.models import AgentObservationRequest, CatalogCandidateRequest, CitationRecordRequest
 from control_server.api import create_app
 import httpx
@@ -266,6 +267,73 @@ def test_control_rejects_reused_service_tokens() -> None:
         assert "互不相同" in str(exc)
     else:
         raise AssertionError("Control 必须拒绝复用的服务身份 token")
+
+
+def test_login_refresh_and_admin_grants_are_session_bound() -> None:
+    projection, _ = _projection()
+    _submit_and_ack(projection, key="deploy:login-grants")
+    identities = InMemoryIdentityStore()
+    admin = identities.bootstrap_admin(username="admin", password="correct-horse-battery")
+    app = create_app(
+        projection=projection,
+        operator_token="operator-secret",
+        main_token="main-secret",
+        health_token="health-secret",
+        gateway_token="gateway-secret",
+        identity_store=identities,
+    )
+
+    async def run() -> tuple[int, dict, int, int]:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://control.test") as client:
+            login = await client.post("/api/v2/auth/login", json={"username": "admin", "password": "correct-horse-battery"})
+            access_token = login.json()["access_token"]
+            headers = {"Authorization": f"Bearer {access_token}"}
+            me = await client.get("/api/v2/me", headers=headers)
+            grants = await client.put(
+                f"/api/v2/users/{admin.user_id}/agent-grants",
+                headers=headers,
+                json={"agent_ids": ["agent_product_handbook"]},
+            )
+            refreshed = await client.post("/api/v2/auth/refresh")
+            logout = await client.post("/api/v2/auth/logout", headers=headers)
+            rejected = await client.get("/api/v2/me", headers=headers)
+        return me.status_code, grants.json(), refreshed.status_code, rejected.status_code
+
+    me_status, grants, refresh_status, rejected_status = asyncio.run(run())
+    assert me_status == 200
+    assert grants == {"user_id": admin.user_id, "agent_ids": ["agent_product_handbook"]}
+    assert refresh_status == 200
+    assert rejected_status == 401
+
+
+def test_gateway_introspection_only_accepts_gateway_identity() -> None:
+    projection, _ = _projection()
+    identities = InMemoryIdentityStore()
+    identities.bootstrap_admin(username="admin", password="correct-horse-battery")
+    app = create_app(
+        projection=projection,
+        operator_token="operator-secret",
+        main_token="main-secret",
+        health_token="health-secret",
+        gateway_token="gateway-secret",
+        identity_store=identities,
+    )
+
+    async def run() -> tuple[int, int]:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://control.test") as client:
+            login = await client.post("/api/v2/auth/login", json={"username": "admin", "password": "correct-horse-battery"})
+            access = login.json()["access_token"]
+            rejected = await client.post(
+                "/internal/v1/auth/session-introspect",
+                headers={"Authorization": "Bearer main-secret", "X-Muye-Session-Authorization": f"Bearer {access}"},
+            )
+            accepted = await client.post(
+                "/internal/v1/auth/session-introspect",
+                headers={"Authorization": "Bearer gateway-secret", "X-Muye-Session-Authorization": f"Bearer {access}"},
+            )
+        return rejected.status_code, accepted.status_code
+
+    assert asyncio.run(run()) == (401, 200)
 
 
 def test_health_collector_rejects_missing_token_before_network() -> None:

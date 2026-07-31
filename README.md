@@ -238,7 +238,7 @@ active Resource Snapshot 中已经发布的逻辑 Resource。
 - `muye-data` 与 `muye-llm` 只允许可信内网服务访问；数据库账号必须限制为只读权限。
 - `muye-data` 不负责创建或修改 Collection、Index、表、文档与向量。
 - 生产必须启用 Data Agent 身份校验；同一 Agent 的 Main、Control、Data token 必须非空且互不相同。
-- 生产 Nginx 只公开 `/agentMain/` 与 `/api/v1/travel/`。
+- 生产只公开 Gateway 的 Web、`/api/v2/` 与 `/agentMain/`；登录会话由 Control 校验，Travel/Order 与所有 SubAgent 均不暴露公网端口。
 
 项目许可证：[MIT](LICENSE)。内置前端资源及迁移代码的许可证见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

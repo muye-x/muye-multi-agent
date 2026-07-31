@@ -1,0 +1,128 @@
+:root {
+    font-family: Inter, system-ui, sans-serif;
+    color: #172033;
+    background: #f4f7f8
+}
+
+* {
+    box-sizing: border-box
+}
+
+body {
+    margin: 0
+}
+
+nav {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 0 28px;
+    background: #fff;
+    border-bottom: 1px solid #d9e0e2
+}
+
+nav strong {
+    margin-right: auto
+}
+
+a {
+    color: #245b68;
+    text-decoration: none
+}
+
+button {
+    border: 1px solid #245b68;
+    background: #245b68;
+    color: #fff;
+    border-radius: 4px;
+    padding: 8px 13px;
+    cursor: pointer
+}
+
+button:disabled {
+    opacity: .6;
+    cursor: wait
+}
+
+section {
+    max-width: 960px;
+    margin: 36px auto;
+    padding: 0 20px
+}
+
+h1 {
+    font-size: 24px;
+    letter-spacing: 0
+}
+
+h2 {
+    font-size: 17px
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff
+}
+
+th,
+td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #e3e8e8
+}
+
+.status {
+    font-weight: 600;
+    color: #176b53
+}
+
+article {
+    padding: 16px 0;
+    border-bottom: 1px solid #d9e0e2
+}
+
+label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 14px 0;
+    max-width: 360px
+}
+
+input,
+select {
+    padding: 9px;
+    border: 1px solid #aebabb;
+    border-radius: 4px;
+    background: #fff
+}
+
+.grant {
+    flex-direction: row;
+    align-items: center
+}
+
+.login {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    margin: 0
+}
+
+.login form {
+    width: min(360px, calc(100vw - 40px));
+    background: #fff;
+    padding: 28px;
+    border: 1px solid #d9e0e2;
+    border-radius: 6px
+}
+
+.login button {
+    width: 100%
+}
+
+[role=alert] {
+    color: #a32424
+}

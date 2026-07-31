@@ -11,8 +11,9 @@ from pydantic import SecretStr
 import uvicorn
 
 from .api import create_app
-from .catalog import CatalogProjection, FileGrantStore
+from .catalog import CatalogProjection
 from .health import AgentHealthCollector
+from .identity import IdentityStore, PostgresIdentityStore
 
 
 _AGENT_ID_PATTERN = re.compile(r"agent_[a-z0-9][a-z0-9_-]{2,63}")
@@ -49,6 +50,7 @@ def _agent_token(agent_id: str) -> SecretStr:
 def create_configured_app():
     """延迟读取运行时 secret，允许工具和测试安全导入本模块。"""
     state_root = Path(os.environ.get("MUYE_CONTROL_STATE_ROOT", "config/runtime/control"))
+    identity_store = _identity_store()
     projection = CatalogProjection(
         health_collector=AgentHealthCollector(
             token_provider=_agent_token,
@@ -56,9 +58,7 @@ def create_configured_app():
             success_threshold=int(os.environ.get("MUYE_CONTROL_HEALTH_SUCCESS_THRESHOLD", "2")),
             observation_window_seconds=float(os.environ.get("MUYE_CONTROL_HEALTH_WINDOW_SECONDS", "60")),
         ),
-        grant_store=FileGrantStore(
-            Path(os.environ.get("MUYE_CONTROL_GRANTS_PATH", state_root / "user-agent-grants.json"))
-        ),
+        grant_store=identity_store,
         active_path=state_root / "active-catalog.json",
     )
     return create_app(
@@ -66,8 +66,22 @@ def create_configured_app():
         operator_token=os.environ.get("MUYE_CONTROL_OPERATOR_TOKEN", ""),
         main_token=os.environ.get("MUYE_CONTROL_MAIN_TOKEN", ""),
         health_token=os.environ.get("MUYE_CONTROL_HEALTH_TOKEN", ""),
+        gateway_token=os.environ.get("MUYE_CONTROL_GATEWAY_TOKEN", ""),
+        identity_store=identity_store,
+        cookie_secure=os.environ.get("MUYE_CONTROL_COOKIE_SECURE", "true").strip().lower() not in {"0", "false", "no"},
         health_poll_seconds=float(os.environ.get("MUYE_CONTROL_HEALTH_POLL_SECONDS", "5")),
     )
+
+
+def _identity_store() -> IdentityStore:
+    """运行服务必须使用 PostgreSQL；内存实现只允许通过测试依赖注入。"""
+    ttl = int(os.environ.get("MUYE_CONTROL_ACCESS_TTL_SECONDS", "900"))
+    database_url = os.environ.get("MUYE_CONTROL_DATABASE_URL", "").strip()
+    if not database_url:
+        raise ValueError("MUYE_CONTROL_DATABASE_URL 为 Control 运行服务的必填项")
+    store = PostgresIdentityStore(database_url, session_ttl_seconds=ttl)
+    store.initialize()
+    return store
 
 
 if __name__ == "__main__":

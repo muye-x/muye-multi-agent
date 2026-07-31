@@ -106,3 +106,46 @@ class CitationResolveResponse(ControlModel):
     agent_version: str
     knowledge_version_id: str
     locator: SourceLocatorV1
+
+
+class LoginRequest(ControlModel):
+    """用户名密码登录；密码绝不进入响应、审计详情或日志。"""
+
+    username: str = Field(min_length=3, max_length=128)
+    password: str = Field(min_length=12, max_length=1024)
+
+
+class AccessTokenResponse(ControlModel):
+    """短期 access token；refresh token 仅通过 HttpOnly Cookie 返回。"""
+
+    access_token: str = Field(min_length=32, max_length=4096)
+    token_type: str = "Bearer"
+    expires_at: str
+
+
+class MeResponse(ControlModel):
+    """当前登录用户的最小展示投影。"""
+
+    user_id: str = Field(pattern=_USER_PATTERN)
+    username: str
+    is_admin: bool
+
+
+class GrantReplaceRequest(ControlModel):
+    """管理员原子替换一个用户的全部 SubAgent grant。"""
+
+    agent_ids: list[str] = Field(max_length=100)
+
+
+class UserCreateRequest(ControlModel):
+    """管理员创建普通用户；新用户默认没有任何 Agent grant。"""
+
+    username: str = Field(min_length=3, max_length=128)
+    password: str = Field(min_length=12, max_length=1024)
+
+
+class SessionIntrospectionResponse(ControlModel):
+    """Gateway 可消费的最小会话身份，绝不包含密码或 grant。"""
+
+    user_id: str = Field(pattern=_USER_PATTERN)
+    is_admin: bool

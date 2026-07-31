@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -110,22 +110,6 @@ def _service_definitions() -> tuple[ServiceDefinition, ...]:
             os.getenv("MUYE_AGENT_MAIN_URL", "http://127.0.0.1:9860"),
             default_profiles=("gateway",),
         ),
-        ServiceDefinition(
-            "agent-travel",
-            "agent-travel",
-            "agent",
-            os.getenv("MUYE_AGENT_TRAVEL_URL", "http://127.0.0.1:8011"),
-            supports_capabilities=True,
-            default_profiles=("internal", "public"),
-        ),
-        ServiceDefinition(
-            "agent-order",
-            "agent-order",
-            "agent",
-            os.getenv("MUYE_AGENT_ORDER_URL", "http://127.0.0.1:8012"),
-            supports_capabilities=True,
-            default_profiles=("internal",),
-        ),
     ])
     return tuple(definitions)
 
@@ -133,10 +117,6 @@ def _service_definitions() -> tuple[ServiceDefinition, ...]:
 TOPOLOGY_EDGES = (
     TopologyEdge(source="agent-main", target="muye-llm", label="模型调用"),
     TopologyEdge(source="agent-main", target="muye-data", label="按需召回"),
-    TopologyEdge(source="agent-travel", target="muye-data", label="按需召回"),
-    TopologyEdge(source="agent-order", target="muye-data", label="按需召回"),
-    TopologyEdge(source="agent-main", target="agent-travel", label="internal"),
-    TopologyEdge(source="agent-main", target="agent-order", label="internal"),
 )
 
 
@@ -209,6 +189,38 @@ def create_app(
     async def health() -> dict[str, str]:
         """返回 dashboard-api 自身运行状态，不代表下游服务可用。"""
         return {"status": "ok"}
+
+    @app.get("/internal/auth")
+    async def gateway_auth(
+        response: Response,
+        authorization: str | None = Header(default=None),
+    ) -> Response:
+        """供 Nginx ``auth_request`` 调用，成功时只回传受信任用户 ID。"""
+        session_token = authorization or ""
+        control_url = os.getenv("MUYE_CONTROL_BASE_URL", "").rstrip("/")
+        gateway_token = os.getenv("MUYE_GATEWAY_CONTROL_TOKEN", "").strip()
+        if not control_url or not gateway_token or not session_token:
+            raise HTTPException(status_code=401, detail="会话认证不可用")
+        try:
+            async with httpx.AsyncClient(timeout=3.0, trust_env=False) as client:
+                upstream = await client.post(
+                    f"{control_url}/internal/v1/auth/session-introspect",
+                    headers={
+                        "Authorization": f"Bearer {gateway_token}",
+                        "X-Muye-Session-Authorization": session_token,
+                    },
+                )
+        except httpx.HTTPError as exc:
+            logger.warning("Control session introspection unavailable error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="会话认证暂不可用") from exc
+        if upstream.status_code != 200:
+            raise HTTPException(status_code=401, detail="登录会话无效")
+        payload = upstream.json()
+        user_id = payload.get("user_id") if isinstance(payload, dict) else None
+        if not isinstance(user_id, str) or not user_id:
+            raise HTTPException(status_code=503, detail="会话认证响应无效")
+        response.headers["X-Muye-User-Id"] = user_id
+        return response
 
     async def dashboard_snapshot() -> DashboardResponse:
         """并发返回所有受控服务的最新健康、能力与拓扑快照。"""
