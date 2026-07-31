@@ -256,6 +256,24 @@ class ResourceCapabilities(StrictModel):
     max_top_k: int
 
 
+class SnapshotResourceIdentity(StrictModel):
+    """单个已加载 Resource 的逻辑身份，不暴露物理 Collection 或连接信息。"""
+
+    resource_id: str = Field(pattern=RESOURCE_NAME_PATTERN)
+    resource_revision: str = Field(min_length=1, max_length=256)
+    resource_checksum: str = Field(pattern=r"^[a-f0-9]{64}$")
+    knowledge_version_id: str = Field(min_length=1, max_length=128)
+    collection_plan_checksum: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class SnapshotIdentityResponse(StrictModel):
+    """阶段 4 候选评测使用的只读 Snapshot 身份证明。"""
+
+    snapshot_revision: str = Field(min_length=1, max_length=256)
+    snapshot_checksum: str = Field(pattern=r"^[a-f0-9]{64}$")
+    resources: dict[str, SnapshotResourceIdentity] = Field(min_length=1, max_length=100)
+
+
 class ErrorResponse(StrictModel):
     """所有 HTTP 错误的稳定公开结构。"""
 

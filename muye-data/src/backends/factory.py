@@ -17,10 +17,18 @@ def build_backends(
     config: DataConfig,
     *,
     environ: Mapping[str, str] | None = None,
+    connection_names: set[str] | None = None,
 ) -> dict[str, RetrievalBackend]:
-    """仅为资源实际引用的 connection 构造惰性客户端。"""
+    """为资源实际引用或调用方指定的已声明 connection 构造惰性客户端。"""
     backends: dict[str, RetrievalBackend] = {}
-    referenced_connections = {resource.connection for resource in config.resources.values()}
+    referenced_connections = (
+        {resource.connection for resource in config.resources.values()}
+        if connection_names is None
+        else set(connection_names)
+    )
+    unknown_connections = referenced_connections - set(config.connections)
+    if unknown_connections:
+        raise ValueError("请求构造未声明的数据库 connection")
     for name, connection in config.connections.items():
         if name not in referenced_connections:
             continue

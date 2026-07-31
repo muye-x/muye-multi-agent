@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 import re
+from zipfile import BadZipFile, ZipFile
 
 from contracts.models import ParsedBlockV1, ParsedDocumentV1, SourceLocatorV1
 
@@ -103,9 +104,21 @@ def parse_document(
     if suffix in {".md", ".txt"}:
         extracted = _parse_text_document(source, relative_path)
     elif suffix == ".pdf":
-        extracted = _parse_pdf(source, relative_path, profile=config.parser_profile, ocr_available=ocr_available)
+        extracted = _parse_pdf(
+            source,
+            relative_path,
+            profile=config.parser_profile,
+            ocr_available=ocr_available,
+            max_pages=config.max_pdf_pages,
+        )
     else:
-        extracted = _parse_docx(source, relative_path, profile=config.parser_profile)
+        extracted = _parse_docx(
+            source,
+            relative_path,
+            profile=config.parser_profile,
+            max_archive_entries=config.max_docx_archive_entries,
+            max_uncompressed_bytes=config.max_docx_uncompressed_bytes,
+        )
     blocks = [
         ParsedBlockV1(
             block_id=stable_identifier("block_", document_id, str(ordinal), content),
@@ -178,12 +191,13 @@ def _parse_pdf(
     *,
     profile: str,
     ocr_available: bool,
+    max_pages: int,
 ) -> list[tuple[str, SourceLocatorV1]]:
     """默认以关闭 OCR 的 Docling 解析 PDF；扫描件明确要求 OCR capability。"""
     if profile != "docling-default-v1":
         raise ParserFailedError("PDF 只能使用 docling-default-v1 解析 profile")
     try:
-        markdown = _convert_docling(path, enable_ocr=ocr_available)
+        markdown = _convert_docling(path, enable_ocr=ocr_available, max_pages=max_pages)
     except Exception as exc:
         if isinstance(exc, DependencyUnavailableError):
             raise
@@ -196,10 +210,23 @@ def _parse_pdf(
     raise ParserFailedError(f"OCR Worker 未从扫描 PDF 提取到文本：{relative_path}")
 
 
-def _parse_docx(path: Path, relative_path: str, *, profile: str) -> list[tuple[str, SourceLocatorV1]]:
+def _parse_docx(
+    path: Path,
+    relative_path: str,
+    *,
+    profile: str,
+    max_archive_entries: int,
+    max_uncompressed_bytes: int,
+) -> list[tuple[str, SourceLocatorV1]]:
     """默认通过 Docling 解析 DOCX，失败不会降级为不透明二进制读取。"""
     if profile != "docling-default-v1":
         raise ParserFailedError("DOCX 只能使用 docling-default-v1 解析 profile")
+    _validate_docx_archive(
+        path,
+        relative_path,
+        max_entries=max_archive_entries,
+        max_uncompressed_bytes=max_uncompressed_bytes,
+    )
     try:
         markdown = _convert_docling(path, enable_ocr=False)
     except Exception as exc:
@@ -212,25 +239,63 @@ def _parse_docx(path: Path, relative_path: str, *, profile: str) -> list[tuple[s
     return blocks
 
 
-def _convert_docling(path: Path, *, enable_ocr: bool) -> str:
-    """按 profile 构造 Docling；仅 OCR Worker capability 请求时才开启 OCR。"""
+def _convert_docling(path: Path, *, enable_ocr: bool, max_pages: int | None = None) -> str:
+    """固定 Docling PDF 管线的 OCR 行为；OCR Worker 只能选择 Paddle backend。"""
     try:
-        from docling.document_converter import DocumentConverter
-        if not enable_ocr:
-            return DocumentConverter().convert(str(path)).document.export_to_markdown()
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import PdfFormatOption
-    except ModuleNotFoundError as exc:
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+    except (ImportError, ModuleNotFoundError) as exc:
         raise DependencyUnavailableError(
             "PDF/DOCX 默认解析需要 Docling；安装 requirements-knowledge-docling.txt 后重试"
         ) from exc
     pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = True
+    pipeline_options.do_ocr = enable_ocr
+    if enable_ocr:
+        try:
+            import paddle  # noqa: F401
+            import paddleocr  # noqa: F401
+            from docling.datamodel.pipeline_options import PaddleOcrOptions
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise DependencyUnavailableError(
+                "ocr:paddle 需要 PaddleOCR；安装 requirements-knowledge-ocr.txt 后重试"
+            ) from exc
+        pipeline_options.ocr_options = PaddleOcrOptions()
     converter = DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
     )
-    return converter.convert(str(path)).document.export_to_markdown()
+    document = converter.convert(str(path)).document
+    if max_pages is not None:
+        pages = getattr(document, "pages", None)
+        try:
+            page_count = len(pages) if pages is not None else None
+        except TypeError as exc:
+            raise ParserFailedError("Docling 未提供可审计的 PDF 页数") from exc
+        if page_count is None:
+            raise ParserFailedError("Docling 未提供可审计的 PDF 页数")
+        if page_count > max_pages:
+            raise ParserFailedError(f"PDF 页数超过 max_pdf_pages：{path.name}")
+    return document.export_to_markdown()
+
+
+def _validate_docx_archive(
+    path: Path,
+    relative_path: str,
+    *,
+    max_entries: int,
+    max_uncompressed_bytes: int,
+) -> None:
+    """在交给 Docling 前根据 ZIP 元数据拒绝 DOCX 解压炸弹和超量 archive。"""
+    try:
+        with ZipFile(path) as archive:
+            members = archive.infolist()
+    except BadZipFile as exc:
+        raise ParserFailedError(f"DOCX 不是有效 ZIP archive：{relative_path}") from exc
+    if len(members) > max_entries:
+        raise ParserFailedError(f"DOCX archive 条目超过 max_docx_archive_entries：{relative_path}")
+    total_uncompressed_bytes = sum(member.file_size for member in members)
+    if total_uncompressed_bytes > max_uncompressed_bytes:
+        raise ParserFailedError(f"DOCX 解压后字节数超过 max_docx_uncompressed_bytes：{relative_path}")
 
 
 def _text_blocks_from_pages(text: str, relative_path: str) -> list[tuple[str, SourceLocatorV1]]:

@@ -21,6 +21,18 @@ class LoadedResourceSnapshot:
     revision: str
     checksum: str
     resources: dict[str, ResourceConfig]
+    identities: dict[str, "LoadedResourceIdentity"]
+
+
+@dataclass(frozen=True)
+class LoadedResourceIdentity:
+    """由已校验 Manifest 派生的运行时 Resource 身份。"""
+
+    resource_id: str
+    resource_revision: str
+    resource_checksum: str
+    knowledge_version_id: str
+    collection_plan_checksum: str
 
 
 def load_resource_snapshot(path: Path, *, known_connections: set[str]) -> LoadedResourceSnapshot:
@@ -56,6 +68,7 @@ def load_resource_snapshot(path: Path, *, known_connections: set[str]) -> Loaded
     if not isinstance(resources_payload, dict) or not resources_payload:
         raise ConfigurationError("Resource Snapshot 必须包含至少一个资源")
     resources: dict[str, ResourceConfig] = {}
+    identities: dict[str, LoadedResourceIdentity] = {}
     for resource_id, manifest in resources_payload.items():
         if not isinstance(resource_id, str) or not _resource_name(resource_id) or not isinstance(manifest, dict):
             raise ConfigurationError("Resource Snapshot 包含非法资源")
@@ -64,7 +77,14 @@ def load_resource_snapshot(path: Path, *, known_connections: set[str]) -> Loaded
             manifest,
             known_connections=known_connections,
         )
-    return LoadedResourceSnapshot(revision=revision, checksum=checksum, resources=resources)
+        identities[resource_id] = LoadedResourceIdentity(
+            resource_id=resource_id,
+            resource_revision=str(manifest["resource_revision"]),
+            resource_checksum=str(manifest["resource_checksum"]),
+            knowledge_version_id=str(manifest["knowledge_version_id"]),
+            collection_plan_checksum=str(manifest["collection_plan_checksum"]),
+        )
+    return LoadedResourceSnapshot(revision=revision, checksum=checksum, resources=resources, identities=identities)
 
 
 def canonical_checksum(value: object) -> str:

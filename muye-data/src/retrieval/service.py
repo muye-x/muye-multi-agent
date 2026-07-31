@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -36,6 +36,8 @@ from src.contracts import (
     ReadinessResponse,
     ResourceReadiness,
     ResourceCapabilities,
+    SnapshotIdentityResponse,
+    SnapshotResourceIdentity,
     RetrievalHit,
     RetrievalResponse,
     RetrieveRequest,
@@ -52,12 +54,15 @@ from src.errors import (
     RerankUnavailableError,
     RetrievalTimeoutError,
     RetrievalUnavailableError,
+    SnapshotIdentityUnavailableError,
 )
 from src.retrieval.fusion import rank_single_channel, weighted_rrf
 from src.snapshots import LoadedResourceSnapshot, load_resource_snapshot
 
 
 logger = logging.getLogger(__name__)
+
+BackendFactory = Callable[[set[str]], Mapping[str, RetrievalBackend]]
 
 
 class RetrievalService:
@@ -75,26 +80,35 @@ class RetrievalService:
         settings: ServiceSettings,
         backends: Mapping[str, RetrievalBackend],
         llm_client: MuyeLLMClient | Any,
+        backend_factory: BackendFactory | None = None,
     ) -> None:
         self._config = config
         self._settings = settings
         self._backends = dict(backends)
+        self._backend_factory = backend_factory
         self._llm_client = llm_client
         self._resources = dict(config.resources)
         self._snapshot_path: Path | None = None
         self._snapshot_mtime_ns: int | None = None
         self._snapshot_revision: str | None = None
         self._snapshot_checksum: str | None = None
+        self._snapshot_identities: dict[str, SnapshotResourceIdentity] = {}
         self._validate_resource_set(self._resources)
 
-    def _validate_resource_set(self, resources: Mapping[str, ResourceConfig]) -> None:
+    def _validate_resource_set(
+        self,
+        resources: Mapping[str, ResourceConfig],
+        *,
+        backends: Mapping[str, RetrievalBackend] | None = None,
+    ) -> None:
         """拒绝资源 pipeline 与已构造只读适配器能力不匹配的候选资源表。"""
+        selected_backends = self._backends if backends is None else backends
         required_backends = {resource.connection for resource in resources.values()}
-        missing_backends = required_backends - set(self._backends)
+        missing_backends = required_backends - set(selected_backends)
         if missing_backends:
             raise ConfigurationError("存在未构造的数据库 connection")
         for resource in resources.values():
-            capabilities = self._backends[resource.connection].capabilities
+            capabilities = selected_backends[resource.connection].capabilities
             if resource.fields.filterable_fields and not capabilities.filters:
                 raise ConfigurationError("资源公开了 filter，但数据库适配器不支持过滤")
             for pipeline in resource.pipelines.values():
@@ -131,13 +145,21 @@ class RetrievalService:
             return False
         candidate = load_resource_snapshot(
             self._snapshot_path,
-            known_connections=set(self._backends),
+            known_connections=set(self._config.connections),
         )
-        self._validate_resource_set(candidate.resources)
-        self._resources = dict(candidate.resources)
+        candidate_backends = dict(self._backends)
+        required_connections = {resource.connection for resource in candidate.resources.values()}
+        missing_connections = required_connections - set(candidate_backends)
+        if missing_connections:
+            if self._backend_factory is None:
+                raise ConfigurationError("候选 Resource Snapshot 需要未初始化 connection")
+            staged_backends = dict(self._backend_factory(missing_connections))
+            if set(staged_backends) != missing_connections:
+                raise ConfigurationError("数据库 connection 工厂未返回完整且精确的候选适配器")
+            candidate_backends.update(staged_backends)
+        self._replace_resource_snapshot(candidate, backends=candidate_backends)
+        self._backends = candidate_backends
         self._snapshot_mtime_ns = stat.st_mtime_ns
-        self._snapshot_revision = candidate.revision
-        self._snapshot_checksum = candidate.checksum
         logger.info(
             "resource snapshot reloaded revision=%s checksum=%s resource_count=%s",
             candidate.revision,
@@ -148,10 +170,39 @@ class RetrievalService:
 
     def replace_resource_snapshot(self, snapshot: LoadedResourceSnapshot) -> None:
         """供启动装配使用已验证快照替换资源表，不暴露 HTTP 写入面。"""
-        self._validate_resource_set(snapshot.resources)
+        self._replace_resource_snapshot(snapshot, backends=self._backends)
+
+    def _replace_resource_snapshot(
+        self,
+        snapshot: LoadedResourceSnapshot,
+        *,
+        backends: Mapping[str, RetrievalBackend],
+    ) -> None:
+        """在候选资源和适配器均验证后替换 Snapshot 派生的运行时投影。"""
+        self._validate_resource_set(snapshot.resources, backends=backends)
         self._resources = dict(snapshot.resources)
         self._snapshot_revision = snapshot.revision
         self._snapshot_checksum = snapshot.checksum
+        self._snapshot_identities = {
+            resource_id: SnapshotResourceIdentity(
+                resource_id=identity.resource_id,
+                resource_revision=identity.resource_revision,
+                resource_checksum=identity.resource_checksum,
+                knowledge_version_id=identity.knowledge_version_id,
+                collection_plan_checksum=identity.collection_plan_checksum,
+            )
+            for resource_id, identity in snapshot.identities.items()
+        }
+
+    def snapshot_identity(self) -> SnapshotIdentityResponse:
+        """返回候选评测可核对的已加载 Snapshot 身份；静态 YAML 资源不能充当证明。"""
+        if self._snapshot_revision is None or self._snapshot_checksum is None or not self._snapshot_identities:
+            raise SnapshotIdentityUnavailableError()
+        return SnapshotIdentityResponse(
+            snapshot_revision=self._snapshot_revision,
+            snapshot_checksum=self._snapshot_checksum,
+            resources=dict(self._snapshot_identities),
+        )
 
     @staticmethod
     def _pipeline(

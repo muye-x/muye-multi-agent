@@ -172,3 +172,14 @@ class RetrievalTimeoutError(DependencyError):
             trace_id=trace_id,
         )
 
+
+class SnapshotIdentityUnavailableError(DataServiceError):
+    """当前进程没有加载版本化 Snapshot，不能作为 candidate 评测证明。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "SNAPSHOT_IDENTITY_UNAVAILABLE",
+            "当前服务未加载版本化 Resource Snapshot",
+            status_code=503,
+            recoverable=False,
+        )

@@ -60,8 +60,13 @@ def add_knowledge_parser(subparsers: argparse._SubParsersAction[argparse.Argumen
     cancel = commands.add_parser("cancel", help="请求协作式取消本地 Knowledge Job")
     cancel.add_argument("job_id", help="知识 Job ID")
 
-    retry = commands.add_parser("retry", help="为失败或取消的 Job 创建新的待执行记录")
+    retry = commands.add_parser("retry", help="同步重放失败或取消 Job，生成并执行新的 attempt")
     retry.add_argument("job_id", help="知识 Job ID")
+    retry.add_argument("--import-root", type=Path, help="重试 build Job 所需的受控本地知识导入根")
+    retry.add_argument("--ocr-available", action="store_true", help="声明重试 build Job 使用 OCR Worker capability")
+    retry.add_argument("--llm-base-url", help="重试 build Job 的受信任 muye-llm 内网地址")
+    retry.add_argument("--milvus-uri", help="重试 build Job 的受信任 Milvus 地址")
+    retry.add_argument("--data-url", help="重试 evaluate Job 的候选 muye-data 只读地址")
 
     parser.set_defaults(handler=run_knowledge_command)
 
@@ -190,8 +195,26 @@ def _run_phase4_command(arguments: argparse.Namespace, workspace_root: Path) -> 
         _print_json(worker.cancel(arguments.job_id))
         return 0
     if command == "retry":
-        _print_json(worker.retry(arguments.job_id))
-        return 0
+        result = worker.retry_job(
+            arguments.job_id,
+            import_root=arguments.import_root,
+            ocr_available=arguments.ocr_available,
+            llm_base_url=arguments.llm_base_url,
+            milvus_uri=arguments.milvus_uri,
+            data_base_url=arguments.data_url,
+        )
+        _print_json(
+            {
+                "job_id": result.job_id,
+                "report": (
+                    result.report_path.relative_to(workspace_root).as_posix()
+                    if result.report_path is not None
+                    else None
+                ),
+                "status": worker.status(result.job_id)["status"],
+            }
+        )
+        return 0 if worker.status(result.job_id)["status"] == "SUCCEEDED" else 2
     raise ValueError(f"不支持的阶段 4 knowledge 子命令：{command}")
 
 

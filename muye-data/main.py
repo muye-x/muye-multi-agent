@@ -67,8 +67,13 @@ def build_service(settings: ServiceSettings) -> RetrievalService:
         settings=settings,
         backends=backends,
         llm_client=llm_client,
+        backend_factory=lambda connection_names: build_backends(
+            config,
+            connection_names=connection_names,
+        ),
     )
     if snapshot_path is not None:
+        service.replace_resource_snapshot(snapshot)
         service.configure_resource_snapshot(snapshot_path)
     return service
 

@@ -14,6 +14,19 @@ from contracts.models import EvaluationSetV1, KnowledgeResourceManifestV1
 from .models import RetrievedEvaluationHitV1
 
 
+@dataclass(frozen=True)
+class ResourceSnapshotIdentity:
+    """隔离 muye-data 实例实际加载的单个 Resource 身份证明。"""
+
+    snapshot_revision: str
+    snapshot_checksum: str
+    resource_id: str
+    resource_revision: str
+    resource_checksum: str
+    knowledge_version_id: str
+    collection_plan_checksum: str
+
+
 class RetrievalRunner(Protocol):
     """评测对只读检索面的最小依赖，便于使用 fake 复现固定排名。"""
 
@@ -27,6 +40,9 @@ class RetrievalRunner(Protocol):
         trace_id: str,
     ) -> list[RetrievedEvaluationHitV1]:
         """返回有序命中；任何依赖错误由实现抛出，不允许伪造空成功。"""
+
+    def snapshot_identity(self, *, resource_id: str) -> ResourceSnapshotIdentity:
+        """返回当前服务加载的 Resource 身份，用于证明评测针对 candidate Snapshot。"""
 
 
 class MuyeDataRetrievalRunner:
@@ -78,6 +94,33 @@ class MuyeDataRetrievalRunner:
             normalized.append(
                 RetrievedEvaluationHitV1(chunk_id=hit["id"], citation_id=citation_id))
         return normalized
+
+    def snapshot_identity(self, *, resource_id: str) -> ResourceSnapshotIdentity:
+        """读取只读运行时身份投影，拒绝静态配置或其他 Snapshot 伪装为 candidate。"""
+        try:
+            with httpx.Client(base_url=self._base_url, timeout=self._timeout_seconds) as client:
+                response = client.get("/api/v1/snapshot-identity")
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as exc:
+            raise RuntimeError("muye-data Snapshot 身份请求失败") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("resources"), dict):
+            raise RuntimeError("muye-data Snapshot 身份响应无效")
+        resource = payload["resources"].get(resource_id)
+        if not isinstance(resource, dict):
+            raise RuntimeError("muye-data Snapshot 未加载待评测 Resource")
+        values = {
+            "snapshot_revision": payload.get("snapshot_revision"),
+            "snapshot_checksum": payload.get("snapshot_checksum"),
+            "resource_id": resource.get("resource_id"),
+            "resource_revision": resource.get("resource_revision"),
+            "resource_checksum": resource.get("resource_checksum"),
+            "knowledge_version_id": resource.get("knowledge_version_id"),
+            "collection_plan_checksum": resource.get("collection_plan_checksum"),
+        }
+        if not all(isinstance(value, str) and value for value in values.values()):
+            raise RuntimeError("muye-data Snapshot 身份响应字段无效")
+        return ResourceSnapshotIdentity(**values)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)

@@ -191,31 +191,30 @@ class MilvusPublisher:
         plan: CollectionIndexPlanV1,
         chunks: Sequence[KnowledgeChunkV1],
     ) -> None:
-        """重跑只接受完整相同的不可变数据，拒绝部分失败留下的同名 Collection。"""
+        """重跑只接受完整相同的不可变数据，拒绝部分或额外写入的同名 Collection。"""
         expected = {chunk.chunk_id: chunk.content_hash for chunk in chunks}
+        try:
+            records = client.query(
+                collection_name=plan.collection_name,
+                filter="",
+                output_fields=["chunk_id", "content_hash"],
+                limit=len(expected) + 1,
+            )
+        except Exception as exc:
+            raise DependencyUnavailableError("无法读取已存在 Milvus Collection 的完整 chunk 集") from exc
+        if not isinstance(records, list):
+            raise ParserFailedError("已存在 Milvus Collection 的 chunk 响应无效")
         actual: dict[str, str] = {}
-        for offset in range(0, len(chunks), 1_000):
-            identifiers = [chunk.chunk_id for chunk in chunks[offset : offset + 1_000]]
-            try:
-                records = client.get(
-                    collection_name=plan.collection_name,
-                    ids=identifiers,
-                    output_fields=["chunk_id", "content_hash"],
-                )
-            except Exception as exc:
-                raise DependencyUnavailableError("无法读取已存在 Milvus Collection 的 chunk") from exc
-            if not isinstance(records, list):
+        for record in records:
+            if not isinstance(record, dict):
                 raise ParserFailedError("已存在 Milvus Collection 的 chunk 响应无效")
-            for record in records:
-                if not isinstance(record, dict):
-                    raise ParserFailedError("已存在 Milvus Collection 的 chunk 响应无效")
-                chunk_id = record.get("chunk_id")
-                content_hash = record.get("content_hash")
-                if not isinstance(chunk_id, str) or not isinstance(content_hash, str):
-                    raise ParserFailedError("已存在 Milvus Collection 的 chunk 缺少身份或 checksum")
-                if chunk_id in actual:
-                    raise ParserFailedError("已存在 Milvus Collection 的 chunk 主键重复")
-                actual[chunk_id] = content_hash
+            chunk_id = record.get("chunk_id")
+            content_hash = record.get("content_hash")
+            if not isinstance(chunk_id, str) or not isinstance(content_hash, str):
+                raise ParserFailedError("已存在 Milvus Collection 的 chunk 缺少身份或 checksum")
+            if chunk_id in actual:
+                raise ParserFailedError("已存在 Milvus Collection 的 chunk 主键重复")
+            actual[chunk_id] = content_hash
         if actual != expected:
             raise ParserFailedError("已存在 Milvus Collection 的 chunk 与当前 KnowledgeVersion 不匹配")
 

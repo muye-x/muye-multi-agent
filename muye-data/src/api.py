@@ -20,6 +20,7 @@ from src.contracts import (
     ResourceCapabilities,
     RetrievalResponse,
     RetrieveRequest,
+    SnapshotIdentityResponse,
 )
 from src.retrieval.service import RetrievalService
 
@@ -86,6 +87,17 @@ async def capabilities(
     result = get_service(request).capabilities(resource, trace_id=trace_id)
     response.headers["X-Trace-Id"] = trace_id
     return result
+
+
+@router.get(
+    "/api/v1/snapshot-identity",
+    response_model=SnapshotIdentityResponse,
+    responses={503: {"model": ErrorResponse, "description": "未加载版本化 Resource Snapshot"}},
+    tags=["retrieval"],
+)
+async def snapshot_identity(request: Request) -> SnapshotIdentityResponse:
+    """返回隔离评测所需的逻辑 Snapshot 身份，不提供任何写入或物理数据库信息。"""
+    return get_service(request).snapshot_identity()
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"])

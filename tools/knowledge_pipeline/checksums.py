@@ -5,6 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from pathlib import Path
+from typing import Any
 
 
 def canonical_checksum(value: object) -> str:
@@ -26,3 +27,12 @@ def stable_identifier(prefix: str, *parts: str, length: int = 32) -> str:
     """由不可变输入派生稳定 ID，供 document/block/chunk/citation 溯源。"""
     digest = sha256("\0".join(parts).encode("utf-8")).hexdigest()
     return f"{prefix}{digest[:length]}"
+
+
+def verify_declared_checksum(model: Any, *, checksum_field: str, label: str) -> None:
+    """重新计算版本化 artifact checksum，拒绝仅修改正文而保留旧声明值的文件。"""
+    payload = model.model_dump(mode="json")
+    declared = payload.pop(checksum_field, None)
+    actual = canonical_checksum(payload)
+    if declared != actual:
+        raise ValueError(f"{label} checksum 不匹配")

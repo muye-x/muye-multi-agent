@@ -24,7 +24,7 @@ from src.errors import (
     RerankUnavailableError,
 )
 from src.retrieval.service import RetrievalService
-from src.snapshots import canonical_checksum
+from src.snapshots import canonical_checksum, load_resource_snapshot
 
 
 _MAIN_SPEC = importlib.util.spec_from_file_location(
@@ -390,7 +390,136 @@ def test_resource_snapshot_reload_is_atomic_and_rejects_invalid_candidate(tmp_pa
     assert backend.search_calls[-1].target == "published_documents"
 
 
-def _write_snapshot(path: Path, *, target: str) -> None:
+def test_snapshot_identity_endpoint_reports_loaded_candidate_proof(tmp_path: Path) -> None:
+    """隔离评测可读取服务已加载的 Snapshot 与 Manifest 身份，而不接触数据库写接口。"""
+    service, _, _ = _service()
+    snapshot_path = tmp_path / "resource-snapshot.json"
+    _write_snapshot(snapshot_path, target="candidate_documents")
+    service.replace_resource_snapshot(load_resource_snapshot(snapshot_path, known_connections={"database"}))
+    app = create_app(service=service, settings_override=_settings())
+
+    async def run() -> dict[str, object]:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get("/api/v1/snapshot-identity")
+                assert response.status_code == 200
+                return response.json()
+
+    identity = asyncio.run(run())
+    assert identity["snapshot_revision"] == "snapshot/kv_test"
+    assert identity["resources"] == {
+        "knowledge": {
+            "resource_id": "knowledge",
+            "resource_revision": "resource/kv_test",
+            "resource_checksum": identity["resources"]["knowledge"]["resource_checksum"],
+            "knowledge_version_id": "kv_test",
+            "collection_plan_checksum": "a" * 64,
+        }
+    }
+
+
+def test_snapshot_identity_endpoint_rejects_static_configuration() -> None:
+    """未从版本化 Snapshot 装配的服务不能冒充 candidate 评测实例。"""
+    service, _, _ = _service()
+    app = create_app(service=service, settings_override=_settings())
+
+    async def run() -> httpx.Response:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                return await client.get("/api/v1/snapshot-identity")
+
+    response = asyncio.run(run())
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "SNAPSHOT_IDENTITY_UNAVAILABLE"
+
+
+def test_snapshot_reload_stages_new_declared_connection_without_restart(tmp_path: Path) -> None:
+    """候选资源首次使用配置中已有的 connection 时应惰性构造并原子切换。"""
+    config = _config()
+    database = config.connections["database"]
+    config = config.model_copy(
+        update={
+            "connections": {
+                "database": database,
+                "archive": database.model_copy(update={"uri": "http://archive.test"}),
+            }
+        }
+    )
+    database_backend = _FakeBackend()
+    archive_backend = _FakeBackend()
+    factory_calls: list[set[str]] = []
+
+    def factory(names: set[str]) -> dict[str, _FakeBackend]:
+        factory_calls.append(set(names))
+        assert names == {"archive"}
+        return {"archive": archive_backend}
+
+    service = RetrievalService(
+        config=config,
+        settings=_settings(),
+        backends={"database": database_backend},
+        llm_client=_FakeLLM(),
+        backend_factory=factory,
+    )
+    snapshot_path = tmp_path / "resource-snapshot.json"
+    _write_snapshot(snapshot_path, target="candidate_documents", connection="database")
+    service.configure_resource_snapshot(snapshot_path)
+    _write_snapshot(snapshot_path, target="archive_documents", connection="archive")
+    os.utime(snapshot_path, ns=(1_000_000_000, 2_000_000_000))
+
+    assert service.reload_resource_snapshot() is True
+    asyncio.run(
+        service.retrieve(
+            RetrieveRequest(resource="knowledge", query="refund", pipeline="keyword", top_k=1)
+        )
+    )
+    assert factory_calls == [{"archive"}]
+    assert archive_backend.search_calls[-1].target == "archive_documents"
+
+
+def test_snapshot_reload_keeps_old_state_when_connection_staging_fails(tmp_path: Path) -> None:
+    """连接工厂未能完整提供候选适配器时，旧资源表和旧 adapter 必须继续服务。"""
+    config = _config()
+    database = config.connections["database"]
+    config = config.model_copy(
+        update={
+            "connections": {
+                "database": database,
+                "archive": database.model_copy(update={"uri": "http://archive.test"}),
+            }
+        }
+    )
+    database_backend = _FakeBackend()
+    service = RetrievalService(
+        config=config,
+        settings=_settings(),
+        backends={"database": database_backend},
+        llm_client=_FakeLLM(),
+        backend_factory=lambda _names: {},
+    )
+    snapshot_path = tmp_path / "resource-snapshot.json"
+    _write_snapshot(snapshot_path, target="candidate_documents", connection="database")
+    service.configure_resource_snapshot(snapshot_path)
+    _write_snapshot(snapshot_path, target="archive_documents", connection="archive")
+    os.utime(snapshot_path, ns=(1_000_000_000, 2_000_000_000))
+
+    with pytest.raises(ConfigurationError, match="完整且精确"):
+        service.reload_resource_snapshot()
+    asyncio.run(
+        service.retrieve(
+            RetrieveRequest(resource="knowledge", query="refund", pipeline="keyword", top_k=1)
+        )
+    )
+    assert database_backend.search_calls[-1].target == "documents"
+
+
+def _write_snapshot(path: Path, *, target: str, connection: str = "database") -> None:
     """构造与阶段 4 Publisher 相同 checksum 规则的最小已发布 Resource Snapshot。"""
     manifest = {
         "schema_version": "muye.ai/knowledge-resource-manifest/v1",
@@ -399,7 +528,7 @@ def _write_snapshot(path: Path, *, target: str) -> None:
         "knowledge_id": "kb.test",
         "knowledge_version_id": "kv_test",
         "collection_plan_checksum": "a" * 64,
-        "connection": "database",
+        "connection": connection,
         "target": target,
         "fields": {
             "id": "document_id",

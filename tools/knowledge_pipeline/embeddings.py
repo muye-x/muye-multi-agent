@@ -33,6 +33,8 @@ class MuyeLLMEmbedder:
         """批量请求 Embedding 并严格校验数目、维度与数值有限性。"""
         if not texts:
             return []
+        if len(texts) > 256 or sum(len(text) for text in texts) > 1_000_000:
+            raise DependencyUnavailableError("单次 Embedding 请求超过数量或字符预算")
         try:
             with httpx.Client(base_url=self._base_url, timeout=self._timeout_seconds) as client:
                 response = client.post(

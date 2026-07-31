@@ -73,6 +73,7 @@ class KnowledgeSourceConfigV1(ContractModel):
     sources: list[KnowledgeSourceSpecV1] = Field(min_length=1, max_length=32)
     parser_profile: Literal["docling-default-v1", "deterministic-text-v1"] = "docling-default-v1"
     embedding_alias: str = Field(pattern=IDENTIFIER_PATTERN)
+    embedding_revision: str = Field(default="r1", pattern=IDENTIFIER_PATTERN)
     embedding_dimensions: int = Field(ge=1, le=65_536)
     connection: str = Field(pattern=IDENTIFIER_PATTERN)
     chunking: ChunkingPolicyV1
@@ -81,6 +82,15 @@ class KnowledgeSourceConfigV1(ContractModel):
     rerank_required: bool = False
     evaluation_set_ref: str = Field(pattern=SAFE_REFERENCE_PATTERN)
     max_file_bytes: int = Field(default=25 * 1024 * 1024, ge=1, le=100 * 1024 * 1024)
+    max_source_files: int = Field(default=1_000, ge=1, le=10_000)
+    max_total_source_bytes: int = Field(default=100 * 1024 * 1024, ge=1, le=1_024 * 1024 * 1024)
+    max_pdf_pages: int = Field(default=1_000, ge=1, le=10_000)
+    max_docx_archive_entries: int = Field(default=10_000, ge=1, le=100_000)
+    max_docx_uncompressed_bytes: int = Field(default=100 * 1024 * 1024, ge=1, le=1_024 * 1024 * 1024)
+    max_parsed_blocks: int = Field(default=100_000, ge=1, le=1_000_000)
+    max_chunks: int = Field(default=10_000, ge=1, le=10_000)
+    max_total_chunk_characters: int = Field(default=20_000_000, ge=1, le=100_000_000)
+    embedding_batch_size: int = Field(default=64, ge=1, le=256)
 
     @field_validator("evaluation_set_ref")
     @classmethod
@@ -156,4 +166,3 @@ class RetrievedEvaluationHitV1(ContractModel):
 
     chunk_id: str = Field(min_length=1, max_length=256, pattern=IDENTIFIER_PATTERN)
     citation_id: str | None = Field(default=None, max_length=256, pattern=IDENTIFIER_PATTERN)
-
