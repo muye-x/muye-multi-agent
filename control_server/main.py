@@ -60,6 +60,7 @@ def create_configured_app():
         ),
         grant_store=identity_store,
         active_path=state_root / "active-catalog.json",
+        citations_path=state_root / "citations.json",
     )
     return create_app(
         projection=projection,

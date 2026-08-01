@@ -324,6 +324,8 @@ class AgentCatalogGenerator:
                 "MUYE_AGENT_DATA_TOKEN": f"${{{token_prefix}_DATA_TOKEN:?set {token_prefix}_DATA_TOKEN}}",
                 "MUYE_AGENT_SERVICE_ID": entry.service_name,
                 "MUYE_AGENT_SOURCE_TREE_CHECKSUM": item.source_checksum,
+                "MUYE_LLM_BASE_URL": "http://muye-llm:9850",
+                "MUYE_SDK_DATA_BASE_URL": "http://muye-data:9840",
                 "MUYE_SDK_API_PROFILES": "internal",
             },
             "labels": {

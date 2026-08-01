@@ -9,7 +9,7 @@ from contracts.models import AgentCatalogEntryV1, ResourceBindingV1
 from control_server.catalog import CatalogProjection
 from control_server.health import AgentHealthCollector, CatalogCandidateError
 from control_server.main import _agent_token
-from control_server.identity import InMemoryIdentityStore
+from control_server.identity import InMemoryIdentityStore, PostgresIdentityStore
 from control_server.models import AgentObservationRequest, CatalogCandidateRequest, CitationRecordRequest
 from control_server.api import create_app
 import httpx
@@ -67,9 +67,12 @@ class _Health:
             raise CatalogCandidateError("probe failed")
 
 
-def _projection(*, reject: bool = False) -> tuple[CatalogProjection, _Grants]:
+def _projection(*, reject: bool = False, active_path=None, citations_path=None) -> tuple[CatalogProjection, _Grants]:
     grants = _Grants()
-    return CatalogProjection(health_collector=_Health(reject=reject), grant_store=grants), grants
+    return CatalogProjection(
+        health_collector=_Health(reject=reject), grant_store=grants,
+        active_path=active_path, citations_path=citations_path,
+    ), grants
 
 
 def _submit_and_ack(projection: CatalogProjection, *, key: str):
@@ -215,6 +218,34 @@ def test_citation_is_bound_to_user_agent_version_and_current_grant() -> None:
         raise AssertionError("撤销 grant 后 citation 必须立即失效")
 
 
+def test_citation_survives_control_restart(tmp_path) -> None:
+    active_path = tmp_path / "active-catalog.json"
+    citations_path = tmp_path / "citations.json"
+    projection, grants = _projection(active_path=active_path, citations_path=citations_path)
+    response = _submit_and_ack(projection, key="deploy:citation-restart")
+    projection.record_citation(
+        CitationRecordRequest(
+            citation_id="citation_restart_012345",
+            user_id="u1",
+            agent_id="agent_product_handbook",
+            agent_version="1.0.0",
+            knowledge_version_id="kv_0123456789abcdef",
+            catalog_revision=response.catalog_revision,
+            catalog_checksum=response.catalog_checksum,
+            locator={"source_path": "docs/handbook.md", "kind": "line", "start": 3, "end": 5},
+        )
+    )
+
+    restarted = CatalogProjection(
+        health_collector=_Health(), grant_store=grants,
+        active_path=active_path, citations_path=citations_path,
+    )
+
+    assert restarted.resolve_citation(citation_id="citation_restart_012345", user_id="u1").agent_id == (
+        "agent_product_handbook"
+    )
+
+
 def test_control_internal_routes_require_distinct_service_identities() -> None:
     projection, _ = _projection()
     app = create_app(
@@ -267,6 +298,37 @@ def test_control_rejects_reused_service_tokens() -> None:
         assert "互不相同" in str(exc)
     else:
         raise AssertionError("Control 必须拒绝复用的服务身份 token")
+
+
+def test_postgres_schema_enforces_a_single_admin(monkeypatch) -> None:
+    statements: list[str] = []
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self):
+            return _Cursor()
+
+    store = PostgresIdentityStore("postgresql://user:password@postgres:5432/control")
+    monkeypatch.setattr(store, "_connection", lambda: _Connection())
+    store.initialize()
+
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS control_single_admin" in statements[0]
+    assert "WHERE is_admin" in statements[0]
 
 
 def test_login_refresh_and_admin_grants_are_session_bound() -> None:

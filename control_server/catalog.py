@@ -103,16 +103,18 @@ class CatalogProjection:
         health_collector: AgentHealthCollector,
         grant_store: GrantStore,
         active_path: Path | None = None,
+        citations_path: Path | None = None,
     ) -> None:
         self._health_collector = health_collector
         self._grant_store = grant_store
         self._active_path = active_path
+        self._citations_path = citations_path
         self._active = self._load_active()
         self._lock = asyncio.Lock()
         self._idempotency: dict[str, _IdempotencyRecord] = {}
         self._acks: dict[tuple[str, str], bool] = {}
         self._pending: AgentCatalogSnapshotV1 | None = None
-        self._citations: dict[str, CitationRecord] = {}
+        self._citations = self._load_citations()
         self._snapshots: dict[tuple[str, str], AgentCatalogSnapshotV1] = {
             (self._active.catalog_revision, self._active.catalog_checksum): self._active
         }
@@ -295,6 +297,7 @@ class CatalogProjection:
         if previous is not None and previous != record:
             raise ValueError("citation_id 已绑定到不同调用身份")
         self._citations[record.citation_id] = record
+        self._persist_citations()
         return record
 
     def resolve_citation(self, *, citation_id: str, user_id: str) -> CitationRecord:
@@ -336,6 +339,67 @@ class CatalogProjection:
             with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
                 stream.write(content)
             os.replace(temporary_path, self._active_path)
+        except Exception:
+            temporary_path.unlink(missing_ok=True)
+            raise
+
+    def _load_citations(self) -> dict[str, CitationRecord]:
+        """加载 Control state volume 中的 citation 投影，损坏时拒绝启动以避免放宽授权。"""
+        if self._citations_path is None or not self._citations_path.exists():
+            return {}
+        if self._citations_path.is_symlink() or not self._citations_path.is_file():
+            raise ValueError("citation 文件必须是普通文件")
+        try:
+            payload = json.loads(self._citations_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("citation 文件无效") from exc
+        if not isinstance(payload, list):
+            raise ValueError("citation 文件格式无效")
+        records: dict[str, CitationRecord] = {}
+        for item in payload:
+            if not isinstance(item, dict) or set(item) != {
+                "citation_id", "user_id", "agent_id", "agent_version", "knowledge_version_id", "locator"
+            }:
+                raise ValueError("citation 记录字段无效")
+            record = CitationRecord(**item)
+            if not all(isinstance(value, str) and value for value in (
+                record.citation_id, record.user_id, record.agent_id, record.agent_version, record.knowledge_version_id
+            )) or not isinstance(record.locator, dict) or record.citation_id in records:
+                raise ValueError("citation 记录内容无效")
+            records[record.citation_id] = record
+        return records
+
+    def _persist_citations(self) -> None:
+        """以原子替换保存 citation；单 Control 实例的 state volume 是该投影的唯一写者。"""
+        if self._citations_path is None:
+            return
+        if self._citations_path.is_symlink():
+            raise ValueError("citation 文件不能是符号链接")
+        self._citations_path.parent.mkdir(parents=True, exist_ok=True)
+        content = json.dumps(
+            [
+                {
+                    "citation_id": item.citation_id,
+                    "user_id": item.user_id,
+                    "agent_id": item.agent_id,
+                    "agent_version": item.agent_version,
+                    "knowledge_version_id": item.knowledge_version_id,
+                    "locator": item.locator,
+                }
+                for item in sorted(self._citations.values(), key=lambda value: value.citation_id)
+            ],
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self._citations_path.name}.", suffix=".tmp", dir=self._citations_path.parent
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+                stream.write(content)
+            os.replace(temporary_path, self._citations_path)
         except Exception:
             temporary_path.unlink(missing_ok=True)
             raise

@@ -380,7 +380,10 @@ class AgentLifecycle:
             raise ValueError("目标 Agent 未进入 Catalog candidate")
         record = load_json_model(self._build_pointer(descriptor), AgentBuildRecordV1)
         self._assert_local_image(record.image_digest)
-        self._compose("up", "-d", f"agent-{slug}")
+        # Candidate validation probes every enabled Agent. Start the complete candidate
+        # before submitting it so a fresh multi-Agent environment can converge in one deploy.
+        services = [entry.service_name for entry in result.snapshot.agents]
+        self._compose("up", "-d", *services)
         active = self._control_client.active()  # type: ignore[union-attr]
         expected_active = build_catalog_snapshot(
             [entry.model_copy(update={"status": "ACTIVE"}) for entry in result.snapshot.agents]
@@ -448,8 +451,17 @@ class AgentLifecycle:
             raise ValueError("历史 BuildRecord 不存在")
         record = load_json_model(path, AgentBuildRecordV1)
         self._validate_record_against_source(record, descriptor, slug)
-        self._write_json_atomic(self._build_pointer(descriptor), record.model_dump(mode="json"))
-        response = self.deploy(slug, timeout_seconds=timeout_seconds)
+        pointer = self._build_pointer(descriptor)
+        previous = load_json_model(pointer, AgentBuildRecordV1) if pointer.is_file() and not pointer.is_symlink() else None
+        self._write_json_atomic(pointer, record.model_dump(mode="json"))
+        try:
+            response = self.deploy(slug, timeout_seconds=timeout_seconds)
+        except Exception:
+            if previous is not None:
+                self._write_json_atomic(pointer, previous.model_dump(mode="json"))
+            else:
+                pointer.unlink(missing_ok=True)
+            raise
         return {**response, "build_record_id": record.build_record_id, "image_digest": record.image_digest}
 
     def _validate_record_against_source(

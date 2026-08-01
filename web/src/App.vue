@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from "vue-router";
+import { api } from "./api";
 const router = useRouter();
-function logout() {
-  sessionStorage.removeItem("muye_access_token");
-  router.push("/login");
+async function logout() {
+  try {
+    await api.logout();
+  } finally {
+    sessionStorage.removeItem("muye_access_token");
+    await router.push("/login");
+  }
 }
 </script>
 <template>

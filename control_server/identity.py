@@ -235,6 +235,8 @@ class PostgresIdentityStore(IdentityStore):
                   audit_id TEXT PRIMARY KEY, actor_id TEXT, action TEXT NOT NULL, target TEXT NOT NULL,
                   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS control_single_admin
+                  ON control_users ((is_admin)) WHERE is_admin;
                 """
             )
 
@@ -256,10 +258,15 @@ class PostgresIdentityStore(IdentityStore):
             if cursor.fetchone()[0] != 0:
                 raise ValueError("Control 已初始化，不能再次创建初始管理员")
             principal = Principal(user_id=f"usr_{token_urlsafe(12)}", username=normalized, is_admin=True)
-            cursor.execute(
-                "INSERT INTO control_users (user_id, username, password_hash, is_admin) VALUES (%s, %s, %s, TRUE)",
-                (principal.user_id, principal.username, _PASSWORD_HASHER.hash(password)),
-            )
+            try:
+                cursor.execute(
+                    "INSERT INTO control_users (user_id, username, password_hash, is_admin) VALUES (%s, %s, %s, TRUE)",
+                    (principal.user_id, principal.username, _PASSWORD_HASHER.hash(password)),
+                )
+            except Exception as exc:
+                if getattr(exc, "sqlstate", None) == "23505":
+                    raise ValueError("Control 已初始化，不能再次创建初始管理员") from exc
+                raise
             self._audit(cursor, principal.user_id, "bootstrap_admin", principal.user_id)
             return principal
 

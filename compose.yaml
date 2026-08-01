@@ -60,7 +60,7 @@ services:
       MUYE_MAIN_CALLER_TOKEN: ${MUYE_MAIN_CALLER_TOKEN:?set MUYE_MAIN_CALLER_TOKEN}
       MUYE_MAIN_AGENT_TOKENS_JSON: ${MUYE_MAIN_AGENT_TOKENS_JSON:-{}}
       MUYE_LLM_BASE_URL: http://muye-llm:9850
-    depends_on: [control, muye-llm]
+    depends_on: [control, muye-llm, muye-data]
     networks: [internal]
     expose: ["9860"]
 
@@ -76,14 +76,29 @@ services:
     networks: [internal]
     expose: ["9850"]
 
+  muye-data:
+    build: .
+    command: ["python", "muye-data/main.py"]
+    environment:
+      MUYE_DATA_HOST: 0.0.0.0
+      MUYE_DATA_CONFIG_PATH: ${MUYE_DATA_CONFIG_PATH:?set MUYE_DATA_CONFIG_PATH}
+      MUYE_DATA_LLM_BASE_URL: http://muye-llm:9850
+      MUYE_DATA_AGENT_AUTH_ENABLED: "true"
+      MUYE_DATA_AGENT_CATALOG_PATH: /var/lib/muye/control/active-catalog.json
+      MUYE_DATA_AGENT_TOKENS_JSON: ${MUYE_DATA_AGENT_TOKENS_JSON:?set MUYE_DATA_AGENT_TOKENS_JSON}
+    volumes: [control-state:/var/lib/muye/control:ro]
+    depends_on: [muye-llm, control]
+    networks: [internal]
+    expose: ["9840"]
+
   gateway:
     build:
       context: .
       dockerfile: muye-gateway/Dockerfile
     environment:
       MUYE_GATEWAY_SERVER_NAME: ${MUYE_GATEWAY_SERVER_NAME:?set MUYE_GATEWAY_SERVER_NAME}
-      MUYE_GATEWAY_TLS_CERTIFICATE: ${MUYE_GATEWAY_TLS_CERTIFICATE:?set MUYE_GATEWAY_TLS_CERTIFICATE}
-      MUYE_GATEWAY_TLS_PRIVATE_KEY: ${MUYE_GATEWAY_TLS_PRIVATE_KEY:?set MUYE_GATEWAY_TLS_PRIVATE_KEY}
+      MUYE_GATEWAY_TLS_CERTIFICATE: /etc/nginx/tls/tls.crt
+      MUYE_GATEWAY_TLS_PRIVATE_KEY: /etc/nginx/tls/tls.key
       MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE: ${MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE:-10m}
       MUYE_GATEWAY_PROXY_READ_TIMEOUT: ${MUYE_GATEWAY_PROXY_READ_TIMEOUT:-3600s}
       MUYE_GATEWAY_PROXY_SEND_TIMEOUT: ${MUYE_GATEWAY_PROXY_SEND_TIMEOUT:-3600s}
@@ -94,6 +109,9 @@ services:
     depends_on: [dashboard-api, agent-main]
     networks: [internal, public]
     ports: ["80:80", "443:443"]
+    volumes:
+      - ${MUYE_GATEWAY_TLS_CERTIFICATE_PATH:?set MUYE_GATEWAY_TLS_CERTIFICATE_PATH}:/etc/nginx/tls/tls.crt:ro
+      - ${MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH:?set MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH}:/etc/nginx/tls/tls.key:ro
     read_only: true
     tmpfs: [/var/cache/nginx, /var/run]
     deploy:

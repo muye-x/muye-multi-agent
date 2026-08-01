@@ -2,12 +2,6 @@ server {
     listen 80;
     server_name ${MUYE_GATEWAY_SERVER_NAME};
     location = /gateway/health { default_type application/json; return 200 '{"status":"healthy"}'; }
-    location /api/v2/ {
-        proxy_pass ${MUYE_CONTROL_BASE_URL}/api/v2/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
     location / { return 301 https://$host$request_uri; }
 }
 
@@ -18,6 +12,12 @@ server {
     ssl_certificate_key ${MUYE_GATEWAY_TLS_PRIVATE_KEY};
     client_max_body_size ${MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE};
     location = /gateway/health { default_type application/json; return 200 '{"status":"healthy"}'; }
+    location /api/v2/ {
+        proxy_pass ${MUYE_CONTROL_BASE_URL}/api/v2/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
     location /agentMain/ {
         auth_request /_muye_session_auth;
         auth_request_set $muye_user_id $upstream_http_x_muye_user_id;

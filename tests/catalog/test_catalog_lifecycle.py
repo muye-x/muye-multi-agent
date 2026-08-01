@@ -12,7 +12,7 @@ import yaml
 
 from contracts.models import AgentBuildRecordV1, AgentDescriptorV1, ResourceSnapshotV1
 from contracts.catalog import build_catalog_snapshot
-from tools.agent_catalog.generator import AgentCatalogGenerator, CatalogPaths
+from tools.agent_catalog.generator import AgentCatalogGenerator, CatalogPaths, CatalogSyncResult
 from tools.agent_catalog.lifecycle import AgentLifecycle, LifecyclePaths
 from tools.agent_generator.checksums import canonical_checksum, source_tree_checksum
 from tools.agent_generator.generator import AgentGenerator, GeneratorPaths
@@ -253,6 +253,78 @@ def test_deploy_starts_service_before_candidate_and_waits_for_ack(tmp_path: Path
         "main-ack",
         "main-smoke",
     ]
+
+
+def test_deploy_starts_every_service_in_the_catalog_candidate(tmp_path: Path) -> None:
+    root, descriptor = _workspace(tmp_path, enabled=True)
+    _write_build_record(root, descriptor)
+    generated = AgentCatalogGenerator(CatalogPaths.for_workspace(root)).sync()
+    second = generated.snapshot.agents[0].model_copy(
+        update={
+            "agent_id": "agent_second_handbook",
+            "service_name": "agent-second-handbook",
+            "base_url": "http://agent-second-handbook:8000",
+            "tool_name": "second_product_help",
+        }
+    )
+    candidate = build_catalog_snapshot([generated.snapshot.agents[0], second])
+    commands: list[list[str]] = []
+
+    def runner(command, *, cwd):
+        commands.append(list(command))
+        output = f"sha256:{'b' * 64}\n" if command[:3] == ["docker", "image", "inspect"] else ""
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    events: list[str] = []
+    lifecycle = AgentLifecycle(
+        LifecyclePaths.for_workspace(root),
+        command_runner=runner,
+        control_client=_Control(build_catalog_snapshot([]), events),
+        main_smoke_client=_Smoke(events),
+    )
+    lifecycle._catalog.sync = lambda: CatalogSyncResult(candidate, "input", {}, {}, False)  # type: ignore[method-assign]
+    lifecycle._assert_aggregate_consistency = lambda _checksum: None  # type: ignore[method-assign]
+
+    lifecycle.deploy("product-handbook", timeout_seconds=1)
+
+    compose_command = next(command for command in commands if command[:2] == ["docker", "compose"])
+    assert compose_command[-2:] == ["agent-product-handbook", "agent-second-handbook"]
+
+
+def test_failed_rollback_restores_previous_build_pointer(tmp_path: Path) -> None:
+    root, descriptor = _workspace(tmp_path, enabled=True)
+    current = _write_build_record(root, descriptor)
+    historical = current.model_copy(
+        update={"build_record_id": "build_rollback_failure", "image_digest": f"sha256:{'d' * 64}"}
+    )
+    history_path = root / "config" / "generated" / "builds" / descriptor.agent_id / "records" / f"{historical.build_record_id}.json"
+    history_path.parent.mkdir(parents=True)
+    history_path.write_text(json.dumps(historical.model_dump(mode="json")), encoding="utf-8")
+
+    def runner(command, *, cwd):
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(command, 0, stdout=f"{historical.image_digest}\n", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    class _FailingSmoke:
+        def smoke(self, agent_id: str) -> None:
+            raise RuntimeError("smoke failed")
+
+    lifecycle = AgentLifecycle(
+        LifecyclePaths.for_workspace(root),
+        command_runner=runner,
+        control_client=_Control(build_catalog_snapshot([]), []),
+        main_smoke_client=_FailingSmoke(),
+    )
+    try:
+        lifecycle.rollback("product-handbook", build_record_id=historical.build_record_id, timeout_seconds=1)
+    except RuntimeError as exc:
+        assert str(exc) == "smoke failed"
+    else:
+        raise AssertionError("失败 rollback 必须向调用方报告")
+
+    pointer = root / "config" / "generated" / "builds" / descriptor.agent_id / "1.0.0.json"
+    assert load_yaml_model(pointer, AgentBuildRecordV1) == current
 
 
 def test_stop_removes_catalog_before_stopping_container(tmp_path: Path) -> None:
