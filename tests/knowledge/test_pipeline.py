@@ -918,6 +918,8 @@ def test_milvus_publisher_creates_fixed_bm25_schema_and_indexes(tmp_path: Path, 
     assert client.collection_name == plan.collection_name
     assert client.schema.functions[0].to_dict()["name"] == "bm25_content"  # type: ignore[union-attr]
     assert {item["index_type"] for item in client.indexes.items} == {"FLAT", "SPARSE_INVERTED_INDEX"}
+    content_field = next(item for item in client.schema.fields if item["field_name"] == "content")
+    assert content_field["analyzer_params"] == {"tokenizer": "jieba"}
     assert client.records[0]["citation_id"] == chunk.citation_id
 
     publisher.publish(plan=plan, chunks=[chunk], embeddings=[[1.0, 0.0, 0.0, 0.0]])

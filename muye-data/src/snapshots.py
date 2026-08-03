@@ -176,7 +176,13 @@ def _convert_pipeline(pipeline: dict[str, Any], *, resource_id: str) -> dict[str
         "rerank_required",
     }
     _reject_unknown_keys(pipeline, allowed, f"Resource {resource_id} pipeline")
-    result = {key: value for key, value in pipeline.items() if key not in {"rerank_model", "rerank_required"}}
+    # PublishedPipelineV1 会将其他 pipeline 变体的参数序列化为 null。
+    # ResourceConfig 使用严格的判别模型，必须省略这些字段，不能将其作为额外字段传入。
+    result = {
+        key: value
+        for key, value in pipeline.items()
+        if key not in {"rerank_model", "rerank_required"} and value is not None
+    }
     rerank_model = pipeline.get("rerank_model")
     rerank_required = pipeline.get("rerank_required", False)
     if rerank_model is not None:

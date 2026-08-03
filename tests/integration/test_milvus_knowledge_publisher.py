@@ -44,7 +44,7 @@ def test_publisher_creates_and_verifies_dense_bm25_collection() -> None:
         knowledge_version_id=plan.knowledge_version_id,
         document_id="doc_0123456789abcdef",
         source_file_id="file_0123456789abcdef",
-        content="Phase four refund policy permits a refund within fourteen days.",
+        content="员工请假需要提前填写请假申请单并逐级审批。",
         title="Phase 4 verification",
         citation_id="citation_0123456789abcdef",
         source_locators=[{"source_path": "verification.md", "kind": "line", "start": 1, "end": 1}],
@@ -69,7 +69,7 @@ def test_publisher_creates_and_verifies_dense_bm25_collection() -> None:
         )
         sparse = client.search(
             collection_name=plan.collection_name,
-            data=["refund policy fourteen days"],
+            data=["请假申请单"],
             anns_field="sparse_embedding",
             search_params={"metric_type": "BM25", "params": {}},
             limit=1,

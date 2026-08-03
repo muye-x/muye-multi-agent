@@ -82,6 +82,7 @@ class MilvusPublisher:
                     kwargs["dim"] = field.dimension
                 if field.enable_analyzer:
                     kwargs["enable_analyzer"] = True
+                    kwargs["analyzer_params"] = {"tokenizer": "jieba"}
                 schema.add_field(**kwargs)
             function, function_type = self._function_types()
             schema.add_function(

@@ -385,6 +385,7 @@ class KnowledgeWorker:
                 "embedding_revision": config.embedding_revision,
                 "embedding_dimensions": config.embedding_dimensions,
                 "chunking": config.chunking.model_dump(mode="json"),
+                "keyword_analyzer": config.keyword_analyzer,
             }
         )
         knowledge_version_id = f"kv_{source_set_checksum[:16]}"

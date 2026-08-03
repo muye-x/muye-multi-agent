@@ -519,7 +519,25 @@ def test_snapshot_reload_keeps_old_state_when_connection_staging_fails(tmp_path:
     assert database_backend.search_calls[-1].target == "documents"
 
 
-def _write_snapshot(path: Path, *, target: str, connection: str = "database") -> None:
+def test_snapshot_accepts_published_pipeline_null_fields(tmp_path: Path) -> None:
+    """发布契约的非适用 pipeline 字段为 null 时仍可加载到严格运行时配置。"""
+    snapshot_path = tmp_path / "resource-snapshot.json"
+    _write_snapshot(snapshot_path, target="candidate_documents", include_null_pipeline_fields=True)
+
+    loaded = load_resource_snapshot(snapshot_path, known_connections={"database"})
+
+    assert loaded.resources["knowledge"].pipelines["dense"].type == "dense"
+    assert loaded.resources["knowledge"].pipelines["keyword"].type == "keyword"
+    assert loaded.resources["knowledge"].pipelines["hybrid"].type == "hybrid"
+
+
+def _write_snapshot(
+    path: Path,
+    *,
+    target: str,
+    connection: str = "database",
+    include_null_pipeline_fields: bool = False,
+) -> None:
     """构造与阶段 4 Publisher 相同 checksum 规则的最小已发布 Resource Snapshot。"""
     manifest = {
         "schema_version": "muye.ai/knowledge-resource-manifest/v1",
@@ -555,6 +573,16 @@ def _write_snapshot(path: Path, *, target: str, connection: str = "database") ->
         "default_pipeline": "hybrid",
         "default_return_fields": ["title", "citation_id"],
     }
+    if include_null_pipeline_fields:
+        for pipeline in manifest["pipelines"].values():
+            pipeline.setdefault("candidate_k", None)
+            pipeline.setdefault("dense_candidate_k", None)
+            pipeline.setdefault("keyword_candidate_k", None)
+            pipeline.setdefault("dense_weight", None)
+            pipeline.setdefault("keyword_weight", None)
+            pipeline.setdefault("rank_constant", None)
+            pipeline.setdefault("rerank_model", None)
+            pipeline.setdefault("rerank_required", False)
     manifest["resource_checksum"] = canonical_checksum(manifest)
     snapshot = {
         "schema_version": "muye.ai/resource-snapshot/v1",

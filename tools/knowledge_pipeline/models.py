@@ -77,6 +77,7 @@ class KnowledgeSourceConfigV1(ContractModel):
     embedding_dimensions: int = Field(ge=1, le=65_536)
     connection: str = Field(pattern=IDENTIFIER_PATTERN)
     chunking: ChunkingPolicyV1
+    keyword_analyzer: Literal["jieba"] = "jieba"
     default_pipeline: Literal["hybrid"] = "hybrid"
     rerank_alias: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
     rerank_required: bool = False
