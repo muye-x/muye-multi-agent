@@ -13,8 +13,41 @@ fi
 cd "${workspace_root}"
 
 compose_files=(-f compose.yaml -f compose.agents.generated.yaml)
-compose() {
-  docker compose --project-name "${MUYE_COMPOSE_PROJECT_NAME:-muye}" "${compose_files[@]}" "$@"
+compose_environment_paths=(
+  control_server/.env
+  muye-llm/.env
+  muye-data/.env
+  agents/agent-main/.env
+  muye-gateway/.env
+)
+compose_environment_arguments=()
+for environment_path in "${compose_environment_paths[@]}"; do
+  if [[ -f "${environment_path}" ]]; then
+    compose_environment_arguments+=(--env-file "${environment_path}")
+  fi
+done
+
+require_compose_environment() {
+  local missing=()
+  local environment_path
+  for environment_path in "${compose_environment_paths[@]}"; do
+    if [[ ! -f "${environment_path}" ]]; then missing+=("${environment_path}"); fi
+  done
+  if (( ${#missing[@]} > 0 )); then
+    printf 'error: missing module environment files: %s\n' "${missing[*]}" >&2
+    return 2
+  fi
+}
+
+compose_up() {
+  require_compose_environment
+  docker compose --project-name "${MUYE_COMPOSE_PROJECT_NAME:-muye}" "${compose_environment_arguments[@]}" "${compose_files[@]}" "$@"
+}
+
+compose_manage() {
+  MUYE_GATEWAY_TLS_CERTIFICATE_PATH=/dev/null \
+  MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH=/dev/null \
+    docker compose --project-name "${MUYE_COMPOSE_PROJECT_NAME:-muye}" "${compose_environment_arguments[@]}" "${compose_files[@]}" "$@"
 }
 
 case "${1:-}" in
@@ -30,11 +63,11 @@ case "${1:-}" in
     MUYE_CONTROL_BOOTSTRAP_ADMIN_USERNAME="${admin_username}" MUYE_CONTROL_BOOTSTRAP_ADMIN_PASSWORD="${admin_password}" \
       exec "${python_executable}" -m control_server.bootstrap
     ;;
-  up) shift; exec compose up -d "$@" ;;
-  down) shift; exec compose down "$@" ;;
-  restart) shift; compose down; exec compose up -d "$@" ;;
-  status) shift; exec compose ps "$@" ;;
-  logs) shift; exec compose logs --tail=200 "$@" ;;
+  up) shift; compose_up up -d "$@" ;;
+  down) shift; compose_manage down "$@" ;;
+  restart) shift; compose_manage down; compose_up up -d "$@" ;;
+  status) shift; compose_manage ps "$@" ;;
+  logs) shift; compose_manage logs --tail=200 "$@" ;;
   doctor) shift; exec "${python_executable}" -m tools.operations doctor "$@" ;;
   smoke) shift; exec "${python_executable}" -m tools.operations smoke "$@" ;;
   *) exec "${python_executable}" -m tools.cli "$@" ;;

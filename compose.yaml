@@ -3,10 +3,9 @@ name: muye
 services:
   postgres:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${MUYE_POSTGRES_DB:?set MUYE_POSTGRES_DB}
-      POSTGRES_USER: ${MUYE_POSTGRES_USER:?set MUYE_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${MUYE_POSTGRES_PASSWORD:?set MUYE_POSTGRES_PASSWORD}
+    env_file:
+      - path: ./control_server/.env
+        required: false
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,14 +21,11 @@ services:
   control:
     build: .
     command: ["python", "-m", "control_server.main"]
+    env_file:
+      - path: ./control_server/.env
+        required: false
     environment:
       MUYE_CONTROL_HOST: 0.0.0.0
-      MUYE_CONTROL_DATABASE_URL: ${MUYE_CONTROL_DATABASE_URL:?set MUYE_CONTROL_DATABASE_URL}
-      MUYE_CONTROL_OPERATOR_TOKEN: ${MUYE_CONTROL_OPERATOR_TOKEN:?set MUYE_CONTROL_OPERATOR_TOKEN}
-      MUYE_CONTROL_MAIN_TOKEN: ${MUYE_CONTROL_MAIN_TOKEN:?set MUYE_CONTROL_MAIN_TOKEN}
-      MUYE_CONTROL_HEALTH_TOKEN: ${MUYE_CONTROL_HEALTH_TOKEN:?set MUYE_CONTROL_HEALTH_TOKEN}
-      MUYE_CONTROL_GATEWAY_TOKEN: ${MUYE_CONTROL_GATEWAY_TOKEN:?set MUYE_CONTROL_GATEWAY_TOKEN}
-      MUYE_CONTROL_AGENT_TOKENS_JSON: ${MUYE_CONTROL_AGENT_TOKENS_JSON:-{}}
       MUYE_CONTROL_STATE_ROOT: /var/lib/muye/control
     volumes: [control-state:/var/lib/muye/control]
     depends_on: { postgres: { condition: service_healthy } }
@@ -42,10 +38,12 @@ services:
   dashboard-api:
     build: .
     command: ["python", "muye-gateway/dashboard_main.py"]
+    env_file:
+      - path: ./muye-gateway/.env
+        required: false
     environment:
       MUYE_DASHBOARD_HOST: 0.0.0.0
       MUYE_CONTROL_BASE_URL: http://control:9880
-      MUYE_GATEWAY_CONTROL_TOKEN: ${MUYE_GATEWAY_CONTROL_TOKEN:?set MUYE_GATEWAY_CONTROL_TOKEN}
     depends_on: [control]
     networks: [internal]
     expose: ["9870"]
@@ -53,13 +51,14 @@ services:
   agent-main:
     build: .
     command: ["python", "agents/agent-main/main.py"]
+    env_file:
+      - path: ./agents/agent-main/.env
+        required: false
     environment:
-      MUYE_SERVER_HOST: 0.0.0.0
+      MUYE_AGENT_HOST: 0.0.0.0
       MUYE_CONTROL_BASE_URL: http://control:9880
-      MUYE_CONTROL_MAIN_TOKEN: ${MUYE_CONTROL_MAIN_TOKEN:?set MUYE_CONTROL_MAIN_TOKEN}
-      MUYE_MAIN_CALLER_TOKEN: ${MUYE_MAIN_CALLER_TOKEN:?set MUYE_MAIN_CALLER_TOKEN}
-      MUYE_MAIN_AGENT_TOKENS_JSON: ${MUYE_MAIN_AGENT_TOKENS_JSON:-{}}
       MUYE_LLM_BASE_URL: http://muye-llm:9850
+      MUYE_SDK_DATA_BASE_URL: http://muye-data:9840
     depends_on: [control, muye-llm, muye-data]
     networks: [internal]
     expose: ["9860"]
@@ -67,25 +66,25 @@ services:
   muye-llm:
     build: .
     command: ["python", "muye-llm/main.py"]
+    env_file:
+      - path: ./muye-llm/.env
+        required: false
     environment:
       MUYE_LLM_HOST: 0.0.0.0
-      MUYE_LLM_API_BASE_URL: ${MUYE_LLM_API_BASE_URL:?set MUYE_LLM_API_BASE_URL}
-      MUYE_LLM_API_KEY: ${MUYE_LLM_API_KEY:?set MUYE_LLM_API_KEY}
-      MUYE_LLM_DEFAULT_MODEL: ${MUYE_LLM_DEFAULT_MODEL:?set MUYE_LLM_DEFAULT_MODEL}
-      MUYE_LLM_MODELS_JSON: ${MUYE_LLM_MODELS_JSON:?set MUYE_LLM_MODELS_JSON}
     networks: [internal]
     expose: ["9850"]
 
   muye-data:
     build: .
     command: ["python", "muye-data/main.py"]
+    env_file:
+      - path: ./muye-data/.env
+        required: false
     environment:
       MUYE_DATA_HOST: 0.0.0.0
-      MUYE_DATA_CONFIG_PATH: ${MUYE_DATA_CONFIG_PATH:?set MUYE_DATA_CONFIG_PATH}
       MUYE_DATA_LLM_BASE_URL: http://muye-llm:9850
       MUYE_DATA_AGENT_AUTH_ENABLED: "true"
       MUYE_DATA_AGENT_CATALOG_PATH: /var/lib/muye/control/active-catalog.json
-      MUYE_DATA_AGENT_TOKENS_JSON: ${MUYE_DATA_AGENT_TOKENS_JSON:?set MUYE_DATA_AGENT_TOKENS_JSON}
     volumes: [control-state:/var/lib/muye/control:ro]
     depends_on: [muye-llm, control]
     networks: [internal]
@@ -95,17 +94,15 @@ services:
     build:
       context: .
       dockerfile: muye-gateway/Dockerfile
+    env_file:
+      - path: ./muye-gateway/.env
+        required: false
     environment:
-      MUYE_GATEWAY_SERVER_NAME: ${MUYE_GATEWAY_SERVER_NAME:?set MUYE_GATEWAY_SERVER_NAME}
       MUYE_GATEWAY_TLS_CERTIFICATE: /etc/nginx/tls/tls.crt
       MUYE_GATEWAY_TLS_PRIVATE_KEY: /etc/nginx/tls/tls.key
-      MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE: ${MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE:-10m}
-      MUYE_GATEWAY_PROXY_READ_TIMEOUT: ${MUYE_GATEWAY_PROXY_READ_TIMEOUT:-3600s}
-      MUYE_GATEWAY_PROXY_SEND_TIMEOUT: ${MUYE_GATEWAY_PROXY_SEND_TIMEOUT:-3600s}
       MUYE_AGENT_MAIN_URL: http://agent-main:9860
       MUYE_DASHBOARD_API_URL: http://dashboard-api:9870
       MUYE_CONTROL_BASE_URL: http://control:9880
-      MUYE_MAIN_CALLER_TOKEN: ${MUYE_MAIN_CALLER_TOKEN:?set MUYE_MAIN_CALLER_TOKEN}
     depends_on: [dashboard-api, agent-main]
     networks: [internal, public]
     ports: ["80:80", "443:443"]

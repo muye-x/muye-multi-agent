@@ -62,43 +62,53 @@ python3 -m venv .venv
 
 ## 配置
 
-仓储提供根目录和各服务目录两类 `.env.example`。它们只是可提交的配置模板，程序不会直接
-读取 `.env.example`；使用时需要复制为同目录下的 `.env`，并填写实际运行值。
+每个模块都在自己的目录维护 `.env.example`。它们只是可提交的配置模板，程序不会直接
+读取 `.env.example`；使用时需要复制为同目录下的 `.env`，并填写实际运行值。根目录不再
+维护或加载聚合 `.env`。
 
 | 配置模板 | 配置范围 | 适用方式 |
 | --- | --- | --- |
-| `.env.example` | 全部服务的一键启动聚合配置 | 本地开发、整体联调 |
 | `muye-llm/.env.example` | LLM、Embedding 与可选 LangSmith 配置 | 单独部署 `muye-llm` |
 | `muye-data/.env.example` | 只读数据服务、资源配置文件与数据库凭据引用 | 单独部署 `muye-data` |
 | `agents/agent-main/.env.example` | 主 Agent、存储、检索与子 Agent 地址 | 单独部署 `agent-main` |
+| `control_server/.env.example` | PostgreSQL、Control 身份与 Catalog 配置 | 单独部署或 Compose Control |
 | `muye-gateway/.env.example` | Nginx、TLS、Gateway 与控制台配置 | 单独部署 Gateway |
+| `tools/agent_catalog/.env.example` | Agent 生命周期 CLI 的部署与 smoke 配置 | 执行 `agent build/deploy/stop/rollback` |
 
-本地一键启动只需创建根目录 `.env`：
+本地一键启动前，分别创建需要启动模块的 `.env`：
 
 ```bash
-cp .env.example .env
+cp muye-llm/.env.example muye-llm/.env
+cp muye-data/.env.example muye-data/.env
+cp agents/agent-main/.env.example agents/agent-main/.env
+cp control_server/.env.example control_server/.env
+cp muye-gateway/.env.example muye-gateway/.env
+cp tools/agent_catalog/.env.example tools/agent_catalog/.env
 ```
 
-`MUYE_LLM_API_KEY` 与 `MUYE_LLM_EMBED_API_KEY` 是当前 LLM 服务启动所需配置；默认模型和主 Agent 使用的 `MUYE_LLM_MODEL` 必须
-存在于 `MUYE_LLM_MODELS_JSON`。
+`MUYE_LLM_API_KEY` 与 `MUYE_LLM_EMBED_API_KEY` 由 `muye-llm/.env` 管理；主 Agent 的
+`MUYE_LLM_MODEL` 必须是该文件 `MUYE_LLM_MODELS_JSON` 中已注册的 alias。
 
 通过根启动器运行时，配置优先级为：
-
-```text
-Shell 环境变量 > 根目录 .env > 服务目录 .env > 源码默认值
-```
-
-通过服务入口独立运行时，不读取根目录 `.env`，配置优先级为：
 
 ```text
 Shell 环境变量 > 当前服务目录 .env > 源码默认值
 ```
 
+根启动器不加载或合并模块配置；它只按依赖顺序启动服务并等待健康检查。配置错误由对应模块
+在自身启动时报告。
+
+已有根目录 `.env` 的迁移方式：将 `MUYE_LLM_*` 上游模型与密钥变量迁入 `muye-llm/.env`，
+`MUYE_DATA_*` 与 Milvus token 迁入 `muye-data/.env`，`MUYE_CONTROL_*` 与 PostgreSQL 变量迁入
+`control_server/.env`，主 Agent 与 Gateway 的变量分别迁入其目录。`agent build/deploy/stop/rollback`
+使用 `tools/agent_catalog/.env`。确认模块可独立启动后，再自行删除旧根 `.env`；根启动器和
+`muye.sh` 均不会读取它。
+
 ## 启动
 
 ### 方式一：一键启动全部服务
 
-该方式由根目录 `main.py` 统一加载根 `.env`，按依赖顺序启动全部服务并等待健康检查，适合
+该方式由根目录 `main.py` 按依赖顺序启动全部服务并等待健康检查，适合
 本地开发和整体联调：
 
 ```bash
@@ -106,7 +116,7 @@ Shell 环境变量 > 当前服务目录 .env > 源码默认值
 .venv/bin/python main.py --timeout 20
 ```
 
-`--dry-run` 只检查服务入口和配置，不启动进程；即使没有真实密钥也可用于 CI 结构检查。
+`--dry-run` 只检查服务入口、模块目录、启用状态与监听端口配置，不启动进程；即使没有真实密钥也可用于 CI 结构检查。
 启动器按 `muye-llm -> muye-data（启用时） -> agent-main -> dashboard-api`
 顺序等待健康检查。`MUYE_DATA_ENABLED=false` 时跳过数据服务，因此默认本地运行不要求
 Milvus。阶段 5 的 Control 与生成 Agent 生命周期是独立部署路径，不由该兼容启动器隐式启动。

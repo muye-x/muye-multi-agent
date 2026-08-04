@@ -3,11 +3,12 @@
 import os
 import json
 import re
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 _AGENT_ID_PATTERN = re.compile(r"agent_[a-z0-9][a-z0-9_-]{2,63}")
 

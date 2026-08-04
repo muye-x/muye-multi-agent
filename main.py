@@ -31,8 +31,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
-
-from dotenv import dotenv_values, load_dotenv
+from dotenv import dotenv_values
 
 # ─── 颜色输出 ────────────────────────────────────────────────────────────────
 
@@ -52,11 +51,6 @@ def _c(color: str, text: str) -> str:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-ROOT_ENV_FILE = PROJECT_ROOT / ".env"
-LLM_ENV_FILE = PROJECT_ROOT / "muye-llm" / ".env"
-DATA_ENV_FILE = PROJECT_ROOT / "muye-data" / ".env"
-AGENT_MAIN_ENV_FILE = PROJECT_ROOT / "agents" / "agent-main" / ".env"
-ENV_EXAMPLE_FILE = PROJECT_ROOT / ".env.example"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 DEFAULT_PYTHON = VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable)
 PYTHON_BIN = os.environ.get("MUYE_PYTHON_BIN", str(DEFAULT_PYTHON))
@@ -67,9 +61,10 @@ SERVICES: list[dict] = [
         "name": "muye-llm · 模型网关",
         "cwd": "muye-llm",
         "cmd": [PYTHON_BIN, "main.py"],
-        "port": 9850,
-        "health_url": "http://127.0.0.1:9850/health",
-        "bind_host": "127.0.0.1",
+        "env_file": "muye-llm/.env",
+        "host_env": "MUYE_LLM_HOST",
+        "port_env": "MUYE_LLM_PORT",
+        "default_port": 9850,
         "log_label": "LLM",
         "log_color": "\033[96m",
     },
@@ -78,21 +73,23 @@ SERVICES: list[dict] = [
         "name": "muye-data · 只读召回服务",
         "cwd": "muye-data",
         "cmd": [PYTHON_BIN, "main.py"],
-        "port": 9840,
-        "health_url": "http://127.0.0.1:9840/health",
-        "bind_host": "127.0.0.1",
+        "host_env": "MUYE_DATA_HOST",
+        "port_env": "MUYE_DATA_PORT",
+        "default_port": 9840,
         "log_label": "DATA",
         "log_color": "\033[36m",
         "enabled_env": "MUYE_DATA_ENABLED",
+        "env_file": "muye-data/.env",
     },
     {
         "id": 2,
         "name": "agent-main · 主 Agent",
         "cwd": "agents/agent-main",
         "cmd": [PYTHON_BIN, "main.py"],
-        "port": 9860,
-        "health_url": "http://127.0.0.1:9860/health",
-        "bind_host": "127.0.0.1",
+        "env_file": "agents/agent-main/.env",
+        "host_env": "MUYE_AGENT_HOST",
+        "port_env": "MUYE_AGENT_PORT",
+        "default_port": 9860,
         "log_label": "MAIN",
         "log_color": "\033[93m",
     },
@@ -101,9 +98,10 @@ SERVICES: list[dict] = [
         "name": "muye-gateway · 运维控制台",
         "cwd": "muye-gateway",
         "cmd": [PYTHON_BIN, "dashboard_main.py"],
-        "port": 9870,
-        "health_url": "http://127.0.0.1:9870/health",
-        "bind_host": "127.0.0.1",
+        "env_file": "muye-gateway/.env",
+        "host_env": "MUYE_DASHBOARD_HOST",
+        "port_env": "MUYE_DASHBOARD_PORT",
+        "default_port": 9870,
         "log_label": "GATEWAY",
         "log_color": "\033[94m",
     },
@@ -113,64 +111,74 @@ SERVICES: list[dict] = [
 _started_procs: list[subprocess.Popen] = []
 
 
-def load_runtime_environment(env_file: Path = ROOT_ENV_FILE) -> None:
-    """加载一键启动配置，已存在的进程环境变量保持最高优先级。"""
-    if env_file.is_file():
-        load_dotenv(env_file, override=False)
-
-
-def read_llm_environment(
-    llm_env_file: Path = LLM_ENV_FILE,
-    agent_main_env_file: Path = AGENT_MAIN_ENV_FILE,
-    *,
-    data_env_file: Path = DATA_ENV_FILE,
-) -> dict[str, str]:
-    """合并服务本地配置与进程环境，供启动前检查使用。
-
-    前两个位置参数保留为 LLM 和主 Agent 配置文件，兼容既有调用方；
-    muye-data 配置只能通过关键字指定。
-    """
-    values: dict[str, str] = {}
-    for env_file in (llm_env_file, data_env_file, agent_main_env_file):
-        if not env_file.is_file():
-            continue
-        values.update(
-            {
-                name: value
-                for name, value in dotenv_values(env_file).items()
-                if value is not None
-            }
-        )
-    values.update(os.environ)
-    return values
-
-
-def _is_http_url(value: str) -> bool:
-    """判断配置值是否为包含主机名的 HTTP(S) URL。"""
-    try:
-        parsed = urlsplit(value)
-    except ValueError:
-        return False
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
-
-
 def _env_flag_enabled(values: Mapping[str, str], name: str, *, default: bool = False) -> bool:
-    """判断可选服务开关；非法值由配置校验函数报告。"""
+    """判断可选模块的本地启用开关。"""
     raw_value = values.get(name)
     if raw_value is None:
         return default
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _service_environment(service: Mapping[str, object]) -> dict[str, str]:
+    """只读取一个服务自身的 `.env`，不将模块配置合并到全局环境。"""
+
+    relative_path = service.get("env_file")
+    if not isinstance(relative_path, str):
+        return {}
+    path = PROJECT_ROOT / relative_path
+    if not path.is_file():
+        return {}
+    return {name: value for name, value in dotenv_values(path).items() if value is not None}
+
+
+def _service_runtime_environment(service: Mapping[str, object]) -> dict[str, str]:
+    """按 Shell 优先级读取单个服务的运行配置。"""
+
+    return {**_service_environment(service), **os.environ}
+
+
+def service_runtime_address(service: Mapping[str, object]) -> tuple[str, int, str]:
+    """返回服务监听地址和本地健康检查 URL，并校验模块端口配置。"""
+
+    host_env = str(service["host_env"])
+    port_env = str(service["port_env"])
+    values = _service_runtime_environment(service)
+    host = values.get(host_env, "127.0.0.1").strip()
+    if not host:
+        raise ValueError(f"{host_env} 不能为空")
+    raw_port = values.get(port_env, str(service["default_port"])).strip()
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise ValueError(f"{port_env} 必须是 1 至 65535 的整数") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{port_env} 必须是 1 至 65535 的整数")
+    health_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    formatted_host = f"[{health_host}]" if ":" in health_host else health_host
+    return host, port, f"http://{formatted_host}:{port}/health"
+
+
 def enabled_services(values: Mapping[str, str] | None = None) -> list[dict]:
-    """返回当前部署明确启用的服务，未声明开关的服务始终启用。"""
-    source = values if values is not None else os.environ
+    """返回已启用服务；shell 环境仅可显式覆盖目标模块的开关。"""
     return [
         service
         for service in SERVICES
         if "enabled_env" not in service
-        or _env_flag_enabled(source, service["enabled_env"])
+        or _env_flag_enabled(
+            values if values is not None else _service_runtime_environment(service),
+            str(service["enabled_env"]),
+        )
     ]
+
+
+def _is_http_url(value: str) -> bool:
+    """供兼容的独立校验调用判断 HTTP(S) URL。"""
+
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def validate_llm_environment(values: Mapping[str, str]) -> list[str]:
@@ -320,12 +328,11 @@ def validate_data_environment(
 
 
 def print_configuration_errors(errors: Sequence[str]) -> None:
-    """输出可操作的启动配置提示，不启动任何子进程。"""
+    """兼容旧调用方的配置提示；根启动器自身不调用此函数。"""
     print(_c(RED + BOLD, "\n启动前配置检查未通过，尚未启动任何服务："))
     for error in errors:
         print(f"  - {error}")
-    print(f"\n请复制 {_c(BLUE, str(ENV_EXAMPLE_FILE))} 为 {_c(BLUE, str(ROOT_ENV_FILE))}，")
-    print("填写实际运行值后重新启动。真实密钥不得提交到版本控制。", flush=True)
+    print("请检查对应模块目录中的 .env 文件。真实密钥不得提交到版本控制。", flush=True)
 
 
 class _AlreadyRunningProc:
@@ -394,8 +401,11 @@ def start_service(svc: dict, health_timeout: int) -> Optional[subprocess.Popen]:
     name: str = svc["name"]
     cwd: Path = PROJECT_ROOT / svc["cwd"]
     cmd: list[str] = svc["cmd"]
-    health_url: str = svc["health_url"]
-    port: int = svc["port"]
+    try:
+        _, port, health_url = service_runtime_address(svc)
+    except ValueError as exc:
+        print(_c(RED, f"  ✘ {name} 配置无效: {exc}"), flush=True)
+        return None
 
     print(f"\n{_c(BOLD + CYAN, '▶')} 启动 {_c(BOLD, name)}")
     print(f"  工作目录: {_c(BLUE, str(cwd))}")
@@ -420,15 +430,6 @@ def start_service(svc: dict, health_timeout: int) -> Optional[subprocess.Popen]:
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     # 强制 Python 非缓冲输出，确保日志实时出现在控制台
     env["PYTHONUNBUFFERED"] = "1"
-
-    # 服务配置统一读取对应服务的 host 环境变量。
-    bind_host: str = svc.get("bind_host", "127.0.0.1")
-    if svc["id"] == 1:
-        env["MUYE_LLM_HOST"] = bind_host
-    elif svc["id"] == 6:
-        env["MUYE_DATA_HOST"] = bind_host
-    elif svc["id"] in {2, 3, 4}:
-        env["MUYE_AGENT_HOST"] = bind_host
 
     log_label: str = svc.get("log_label", svc["name"][:6])
     log_color: str = svc.get("log_color", CYAN)
@@ -465,11 +466,8 @@ def start_service(svc: dict, health_timeout: int) -> Optional[subprocess.Popen]:
 
 
 # ─── dry-run 模式 ────────────────────────────────────────────────────────────
-def dry_run(
-    configuration_errors: Sequence[str] = (),
-    active_services: Sequence[Mapping[str, object]] | None = None,
-) -> None:
-    """检查服务入口与运行配置，但不启动子进程。"""
+def dry_run(active_services: Sequence[Mapping[str, object]] | None = None) -> None:
+    """检查服务入口与启用状态，但不读取或校验模块业务配置。"""
     print(f"\n{_c(BOLD + YELLOW, '⚡ DRY-RUN 模式')}\n")
     python_bin = Path(PYTHON_BIN)
     print(f"  Python (.venv): {_c(BLUE, str(python_bin))} {'✔' if python_bin.exists() else '✘'}\n")
@@ -486,6 +484,13 @@ def dry_run(
         ok_py = Path(svc["cmd"][0]).exists()
         status = _c(GREEN, "✔") if (ok_cwd and ok_cmd and ok_py) else _c(RED, "✘")
         print(f"  {status} {svc['name']}")
+        try:
+            _, port, health_url = service_runtime_address(svc)
+        except ValueError as exc:
+            print(_c(RED, f"      运行地址配置无效: {exc}"))
+            all_ok = False
+        else:
+            print(f"      健康检查: {health_url} (端口 {port})")
         if svc.get("enabled_env") and svc.get("id") not in active_ids:
             print(_c(YELLOW, f"      已由 {svc['enabled_env']}=false 跳过运行"))
         if not ok_cwd:
@@ -502,11 +507,6 @@ def dry_run(
         print(_c(GREEN + BOLD, "服务入口检查通过"))
     else:
         print(_c(RED + BOLD, "服务入口检查存在错误"))
-    if configuration_errors:
-        print(_c(YELLOW + BOLD, "\n运行配置尚未完成："))
-        for error in configuration_errors:
-            print(f"  - {error}")
-        print(f"  配置模板: {ENV_EXAMPLE_FILE}")
 
 
 # ─── 关闭 ─────────────────────────────────────────────────────────────────────
@@ -547,20 +547,10 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="仅检查不启动")
     args = parser.parse_args()
 
-    load_runtime_environment()
-    runtime_values = read_llm_environment()
-    configuration_errors = [
-        *validate_llm_environment(runtime_values),
-        *validate_data_environment(runtime_values),
-    ]
-    services = enabled_services(runtime_values)
+    services = enabled_services()
 
     if args.dry_run:
-        dry_run(configuration_errors, services)
-        return
-
-    if configuration_errors:
-        print_configuration_errors(configuration_errors)
+        dry_run(services)
         return
 
     signal.signal(signal.SIGINT, _graceful_shutdown)

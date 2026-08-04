@@ -3,13 +3,14 @@
 import json
 import math
 import os
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 DEFAULT_LLM_MODELS_JSON = (

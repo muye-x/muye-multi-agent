@@ -16,6 +16,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 import httpx
+from dotenv import dotenv_values
 
 from contracts.catalog import build_catalog_snapshot, canonical_checksum, validate_catalog_snapshot_checksum
 from contracts.models import AgentBuildRecordV1, AgentCatalogSnapshotV1, AgentDescriptorV1
@@ -32,6 +33,19 @@ _BASE_IMAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9./:_-]*@sha256:([a-f0-9]
 _IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[a-f0-9]{64}")
 _PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 BUILDER_VERSION = "2.0.0"
+_CATALOG_ENV_FILE = "tools/agent_catalog/.env"
+
+
+def _catalog_environment(workspace_root: Path) -> dict[str, str]:
+    """读取生命周期 CLI 专属配置；Shell 中同名变量具有最高优先级。"""
+
+    path = workspace_root / _CATALOG_ENV_FILE
+    values = (
+        {name: value for name, value in dotenv_values(path).items() if value is not None}
+        if path.is_file()
+        else {}
+    )
+    return {**values, **os.environ}
 
 
 class CommandRunner(Protocol):
@@ -213,6 +227,7 @@ class AgentLifecycle:
         command_runner: CommandRunner = _run_command,
         control_client: ControlDeploymentClient | None = None,
         main_smoke_client: MainSmokeClient | None = None,
+        runtime_environment: Mapping[str, str] | None = None,
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
@@ -223,6 +238,7 @@ class AgentLifecycle:
         self._generator = AgentGenerator(GeneratorPaths.for_workspace(paths.workspace_root))
         self._control_client = control_client
         self._main_smoke_client = main_smoke_client
+        self._runtime_environment = dict(os.environ if runtime_environment is None else runtime_environment)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._monotonic = monotonic
         self._sleeper = sleeper
@@ -230,25 +246,27 @@ class AgentLifecycle:
     @classmethod
     def for_workspace(cls, workspace_root: Path) -> "AgentLifecycle":
         root = workspace_root.resolve(strict=True)
-        control_url = os.environ.get("MUYE_CONTROL_BASE_URL", "").strip()
+        environment = _catalog_environment(root)
+        control_url = environment.get("MUYE_CONTROL_BASE_URL", "").strip()
         client = None
         if control_url:
             client = ControlDeploymentClient(
                 base_url=control_url,
-                operator_token=os.environ.get("MUYE_CONTROL_OPERATOR_TOKEN", ""),
+                operator_token=environment.get("MUYE_CONTROL_OPERATOR_TOKEN", ""),
             )
-        main_url = os.environ.get("MUYE_MAIN_BASE_URL", "").strip()
+        main_url = environment.get("MUYE_MAIN_BASE_URL", "").strip()
         smoke_client = None
         if main_url:
             smoke_client = MainSmokeClient(
                 base_url=main_url,
-                caller_token=os.environ.get("MUYE_MAIN_CALLER_TOKEN", ""),
-                user_id=os.environ.get("MUYE_AGENT_SMOKE_USER_ID", ""),
+                caller_token=environment.get("MUYE_MAIN_CALLER_TOKEN", ""),
+                user_id=environment.get("MUYE_AGENT_SMOKE_USER_ID", ""),
             )
         return cls(
             LifecyclePaths.for_workspace(root),
             control_client=client,
             main_smoke_client=smoke_client,
+            runtime_environment=environment,
         )
 
     def list_agents(self) -> list[dict[str, object]]:
@@ -282,7 +300,7 @@ class AgentLifecycle:
         validation = self._generator.validate(slug=slug)
         if not validation.is_valid:
             raise ValueError("Agent 生成基线无效，拒绝构建")
-        image = (base_image or os.environ.get("MUYE_AGENT_BASE_IMAGE", "")).strip()
+        image = (base_image or self._runtime_environment.get("MUYE_AGENT_BASE_IMAGE", "")).strip()
         match = _BASE_IMAGE_PATTERN.fullmatch(image)
         if match is None:
             raise ValueError("基础镜像必须通过 --base-image 或 MUYE_AGENT_BASE_IMAGE 提供且固定 @sha256 digest")
@@ -494,11 +512,22 @@ class AgentLifecycle:
         raise TimeoutError("等待 MainAgent Catalog ACK 超时；目标容器保持运行以便诊断")
 
     def _compose(self, *arguments: str) -> None:
-        project = os.environ.get("MUYE_COMPOSE_PROJECT_NAME", "muye").strip()
+        project = self._runtime_environment.get("MUYE_COMPOSE_PROJECT_NAME", "muye").strip()
         if _PROJECT_PATTERN.fullmatch(project) is None:
             raise ValueError("MUYE_COMPOSE_PROJECT_NAME 格式无效")
         command = ["docker", "compose", "-p", project]
-        extra_files = [item for item in os.environ.get("MUYE_COMPOSE_BASE_FILES", "").split(os.pathsep) if item]
+        for relative_path in (
+            "control_server/.env",
+            "muye-llm/.env",
+            "muye-data/.env",
+            "agents/agent-main/.env",
+            "muye-gateway/.env",
+        ):
+            command.extend(["--env-file", str(self._paths.workspace_root / relative_path)])
+        configured_files = self._runtime_environment.get("MUYE_COMPOSE_BASE_FILES", "")
+        extra_files = [item for item in configured_files.split(os.pathsep) if item]
+        if not extra_files and (self._paths.workspace_root / "compose.yaml").is_file():
+            extra_files = ["compose.yaml"]
         for item in extra_files:
             path = (self._paths.workspace_root / item).resolve(strict=True)
             path.relative_to(self._paths.workspace_root)

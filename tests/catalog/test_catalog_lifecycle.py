@@ -416,3 +416,40 @@ def test_agent_lifecycle_cli_parses_all_stage_five_commands() -> None:
 
     for arguments, expected in cases:
         assert parser.parse_args(arguments).agent_command == expected
+
+
+def test_lifecycle_loads_its_dedicated_module_environment(tmp_path: Path, monkeypatch) -> None:
+    """部署 CLI 不依赖根目录或其他服务目录的环境变量。"""
+
+    root = tmp_path / "workspace"
+    environment_file = root / "tools" / "agent_catalog" / ".env"
+    environment_file.parent.mkdir(parents=True)
+    environment_file.write_text(
+        "\n".join(
+            (
+                "MUYE_CONTROL_BASE_URL=http://control.example.test:9880",
+                "MUYE_CONTROL_OPERATOR_TOKEN=operator-token",
+                "MUYE_MAIN_BASE_URL=http://main.example.test:9860",
+                "MUYE_MAIN_CALLER_TOKEN=caller-token",
+                "MUYE_AGENT_SMOKE_USER_ID=smoke-user",
+                "MUYE_COMPOSE_PROJECT_NAME=muye-test",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "MUYE_CONTROL_BASE_URL",
+        "MUYE_CONTROL_OPERATOR_TOKEN",
+        "MUYE_MAIN_BASE_URL",
+        "MUYE_MAIN_CALLER_TOKEN",
+        "MUYE_AGENT_SMOKE_USER_ID",
+        "MUYE_COMPOSE_PROJECT_NAME",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    lifecycle = AgentLifecycle.for_workspace(root)
+
+    assert lifecycle._control_client is not None
+    assert lifecycle._main_smoke_client is not None
+    assert lifecycle._runtime_environment["MUYE_COMPOSE_PROJECT_NAME"] == "muye-test"

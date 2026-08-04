@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 
+from dotenv import load_dotenv
 from pydantic import SecretStr
 import uvicorn
 
@@ -17,6 +18,7 @@ from .identity import IdentityStore, PostgresIdentityStore
 
 
 _AGENT_ID_PATTERN = re.compile(r"agent_[a-z0-9][a-z0-9_-]{2,63}")
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def _agent_token(agent_id: str) -> SecretStr:

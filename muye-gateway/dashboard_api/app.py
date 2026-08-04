@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -16,10 +17,12 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 FetchJson = Callable[[str, float], Awaitable[Mapping[str, object]]]
 
