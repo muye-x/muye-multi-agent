@@ -15,6 +15,7 @@ from .generator import AgentGenerator, GeneratorPaths
 from .io import assert_path_within, load_yaml_model
 from .models import AgentProfileInputV1, GenerationApprovalV1
 from tools.agent_catalog.cli import LIFECYCLE_COMMANDS, add_agent_lifecycle_parsers, run_agent_lifecycle_command
+from tools.agent_creation.service import AgentCreationService
 
 
 def add_agent_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -37,6 +38,14 @@ def add_agent_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
     diff = commands.add_parser("diff", help="只读比较当前 Agent 与模板重渲染结果")
     diff.add_argument("slug", help="目标 Agent slug")
     diff.add_argument("--template", choices=("latest", "source"), default="latest", help="比较的模板版本")
+
+    prepare = commands.add_parser("prepare", help="解析资料并生成一次性审阅计划，不写入 Milvus")
+    prepare.add_argument("project_directory", type=Path, help="包含 project.yaml 与 sources/ 的 Agent 项目目录")
+
+    create = commands.add_parser("create", help="确认计划后构建、评测并生成可测试 Agent 源码")
+    create.add_argument("project_directory", type=Path, help="包含 project.yaml 与 sources/ 的 Agent 项目目录")
+    create.add_argument("--plan-checksum", required=True, help="agent prepare 输出的完整计划 checksum")
+    create.add_argument("--approved-by", required=True, help="确认人的稳定逻辑标识")
 
     add_agent_lifecycle_parsers(commands)
 
@@ -80,6 +89,25 @@ def run_agent_command(arguments: argparse.Namespace, workspace_root: Path) -> in
         if result.text:
             print(result.text, end="" if result.text.endswith("\n") else "\n")
         return 1 if result.has_changes else 0
+    if arguments.agent_command == "prepare":
+        plan = AgentCreationService(workspace_root).prepare(arguments.project_directory)
+        _print_json(
+            {
+                "plan_checksum": plan.plan_checksum,
+                "plan": f"config/generated/agent-creation-plans/{plan.project_slug}/current.json",
+                "chunk_count": plan.summary["chunk_count"],
+                "status": "ready-for-review",
+            }
+        )
+        return 0
+    if arguments.agent_command == "create":
+        result = AgentCreationService(workspace_root).create(
+            arguments.project_directory,
+            plan_checksum=arguments.plan_checksum,
+            approved_by=arguments.approved_by,
+        )
+        _print_json(result)
+        return 0
     if arguments.agent_command in LIFECYCLE_COMMANDS:
         return run_agent_lifecycle_command(arguments, workspace_root)
     raise ValueError(f"不支持的 agent 子命令：{arguments.agent_command}")

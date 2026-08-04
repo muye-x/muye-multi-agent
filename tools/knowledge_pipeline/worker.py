@@ -63,9 +63,23 @@ class KnowledgeWorker:
         self._workspace_root = workspace_root.resolve(strict=True)
         self._jobs = JobStore(self._workspace_root)
 
-    def propose_schema(self, *, slug: str, import_root: Path, ocr_available: bool = False) -> ProposalResult:
-        """解析当前源文件并写入当前 KnowledgeVersion 的 Schema Proposal。"""
-        config = self._load_source_config(slug)
+    def propose_schema(
+        self,
+        *,
+        slug: str,
+        import_root: Path,
+        ocr_available: bool = False,
+        source_config: KnowledgeSourceConfigV1 | None = None,
+    ) -> ProposalResult:
+        """解析当前源文件并写入当前 KnowledgeVersion 的 Schema Proposal。
+
+        ``source_config`` 只供上层在审阅阶段传入尚未物化的受检配置，避免计划生成
+        覆盖同名的手工 ``config/knowledge-sources`` 文件。构建阶段仍只读取已确认的
+        工作区配置。
+        """
+        config = source_config or self._load_source_config(slug)
+        if config.slug != slug:
+            raise ValueError("知识源配置中的 slug 必须与命令参数一致")
         documents = self._parse_current_documents(config, import_root=import_root, ocr_available=ocr_available)
         proposal = build_schema_proposal(config, documents)
         path = self._proposal_path(slug, proposal.knowledge_version_id)

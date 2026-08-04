@@ -73,6 +73,7 @@ python3 -m venv .venv
 | `agents/agent-main/.env.example` | 主 Agent、存储、检索与子 Agent 地址 | 单独部署 `agent-main` |
 | `control_server/.env.example` | PostgreSQL、Control 身份与 Catalog 配置 | 单独部署或 Compose Control |
 | `muye-gateway/.env.example` | Nginx、TLS、Gateway 与控制台配置 | 单独部署 Gateway |
+| `tools/agent_creation/.env.example` | 两步创建 Agent 的 LLM 与 Milvus 连接 | 执行 `agent prepare/create` |
 | `tools/agent_catalog/.env.example` | Agent 生命周期 CLI 的部署与 smoke 配置 | 执行 `agent build/deploy/stop/rollback` |
 
 本地一键启动前，分别创建需要启动模块的 `.env`：
@@ -83,6 +84,7 @@ cp muye-data/.env.example muye-data/.env
 cp agents/agent-main/.env.example agents/agent-main/.env
 cp control_server/.env.example control_server/.env
 cp muye-gateway/.env.example muye-gateway/.env
+cp tools/agent_creation/.env.example tools/agent_creation/.env
 cp tools/agent_catalog/.env.example tools/agent_catalog/.env
 ```
 
@@ -176,6 +178,10 @@ muye-gateway/scripts/smoke-test.sh
 ```
 
 ## 模板 Agent 生成
+
+首次仅从资料文件创建知识 Agent 时，使用[两步创建知识 Agent](docs/agent-creation-quickstart.md)。该流程以项目目录中的资料为输入，在评测通过后生成 `agents/agent-<slug>/`；项目目录必须位于 `agents/` 之外。它使用 `muye-llm/.env` 中的模型与上游凭据，以及 `tools/agent_creation/.env` 中的 LLM/Milvus 连接。
+
+以下命令是已有逻辑配置的高级生成、CI 与迁移入口：
 
 v2.0 的知识 Agent 由本地、确定性 Generator 生成，首次产物位于
 `agents/agent-<slug>/`。Generator 只读取版本控制中的逻辑 Resource、Retrieval Skill 和已确认 Profile；
