@@ -62,6 +62,16 @@ Markdown 与 TXT 无需 Docling；DOCX/PDF 需要 Docling，扫描 PDF 还需要
 
 该命令校验模型 alias、解析资料和生成 chunk；LLM 只提出 Profile 与评测用例，输出会保存为 `config/generated/agent-creation-plans/<slug>/current.json`。审阅其中的职责边界、评测问题、`summary.evaluation_evidence` 中的来源定位与摘录、以及预计规模。此步骤不会写入 Milvus，也不会写入或覆盖 `config/knowledge-*`、`config/agents` 中的兼容配置。
 
+需要由已指定审核人直接确认当前计划时，可将两步合并为一次命令：
+
+```bash
+./scripts/muye.sh agent prepare agent-projects/<slug> \
+  --auto-approve \
+  --approved-by <principal>
+```
+
+该模式会先生成计划，再以本次生成的完整 checksum 执行 `create`；`<principal>` 会写入 creation、schema、resource、skill 和 profile 审批记录。它会跳过人工审阅计划的停顿，但不会跳过资料漂移复核、Milvus 构建、检索评测或生成后契约测试。`--approved-by` 只能与 `--auto-approve` 一起使用。
+
 ## 确认并创建
 
 确认计划后，使用输出中的完整 checksum 执行：

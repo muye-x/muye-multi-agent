@@ -41,6 +41,15 @@ def add_agent_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
 
     prepare = commands.add_parser("prepare", help="解析资料并生成一次性审阅计划，不写入 Milvus")
     prepare.add_argument("project_directory", type=Path, help="包含 project.yaml 与 sources/ 的 Agent 项目目录")
+    prepare.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="生成计划后自动确认并创建 Agent；必须同时提供 --approved-by",
+    )
+    prepare.add_argument(
+        "--approved-by",
+        help="自动确认时写入审批记录的审核人稳定逻辑标识",
+    )
 
     create = commands.add_parser("create", help="确认计划后构建、评测并生成可测试 Agent 源码")
     create.add_argument("project_directory", type=Path, help="包含 project.yaml 与 sources/ 的 Agent 项目目录")
@@ -90,7 +99,29 @@ def run_agent_command(arguments: argparse.Namespace, workspace_root: Path) -> in
             print(result.text, end="" if result.text.endswith("\n") else "\n")
         return 1 if result.has_changes else 0
     if arguments.agent_command == "prepare":
-        plan = AgentCreationService(workspace_root).prepare(arguments.project_directory)
+        if arguments.approved_by and not arguments.auto_approve:
+            raise ValueError("--approved-by 只能与 --auto-approve 一起用于 agent prepare")
+        if arguments.auto_approve and not arguments.approved_by:
+            raise ValueError("agent prepare --auto-approve 必须提供 --approved-by")
+
+        service = AgentCreationService(workspace_root)
+        plan = service.prepare(arguments.project_directory)
+        if arguments.auto_approve:
+            result = service.create(
+                arguments.project_directory,
+                plan_checksum=plan.plan_checksum,
+                approved_by=arguments.approved_by,
+            )
+            _print_json(
+                {
+                    "approved_by": arguments.approved_by,
+                    "plan": f"config/generated/agent-creation-plans/{plan.project_slug}/current.json",
+                    "plan_checksum": plan.plan_checksum,
+                    "result": result,
+                    "status": "created-with-auto-approval",
+                }
+            )
+            return 0
         _print_json(
             {
                 "plan_checksum": plan.plan_checksum,
