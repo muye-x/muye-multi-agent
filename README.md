@@ -5,6 +5,8 @@ Muye Multi-Agent Scaffold 是一个基于
 统一模型网关、可选只读数据召回服务、主编排 Agent、两个子 Agent 示例以及可选的 Nginx Gateway；SDK 在独立仓储
 维护，并通过 Python 包依赖接入。
 
+首次从资料创建知识 Agent 的推荐路径是：配置模型和 Milvus，使用自动审批生成 Agent，再在生成目录执行 `run-local.sh` 完成本地服务测试。创建流程与完整多服务部署相互独立，开发者可以先完成知识 Agent 验证，再接入 Catalog、Control 和 Gateway。
+
 ## 界面预览
 
 ### 架构图
@@ -50,6 +52,14 @@ Client
 
 Python 3.11 或更高版本。核心 SDK 使用 [muye-multi-agent-sdk](https://github.com/muye-x/muye-multi-agent-sdk) v2.0.0。
 
+| 场景 | 需要的外部依赖 |
+| --- | --- |
+| 从资料创建知识 Agent | 已配置的 OpenAI-compatible Chat/Embedding 上游、可访问的 Milvus |
+| 没有本地 Milvus | Docker 和 Docker Compose，用于启动本仓库提供的本地 Milvus/MinIO/etcd 组合 |
+| 运行完整系统 | 上述依赖，以及按启用模块配置的 PostgreSQL、Gateway/TLS 等服务 |
+
+本地 Milvus Compose 仅用于开发和 PoC。若团队已有 Milvus 或使用托管服务，应复用该服务，不要同时启动本地 Compose。
+
 ## 安装
 
 安装 GitHub 上固定版本的 SDK 与全部服务依赖：
@@ -73,10 +83,27 @@ python3 -m venv .venv
 | `agents/agent-main/.env.example` | 主 Agent、存储、检索与子 Agent 地址 | 单独部署 `agent-main` |
 | `control_server/.env.example` | PostgreSQL、Control 身份与 Catalog 配置 | 单独部署或 Compose Control |
 | `muye-gateway/.env.example` | Nginx、TLS、Gateway 与控制台配置 | 单独部署 Gateway |
-| `tools/agent_creation/.env.example` | 两步创建 Agent 的 LLM 与 Milvus 连接 | 执行 `agent prepare/create` |
+| `tools/agent_creation/.env.example` | 创建 Agent 的 LLM 与 Milvus 连接 | 执行 `agent prepare --auto-approve` 或手动 `prepare/create` |
 | `tools/agent_catalog/.env.example` | Agent 生命周期 CLI 的部署与 smoke 配置 | 执行 `agent build/deploy/stop/rollback` |
 
-本地一键启动前，分别创建需要启动模块的 `.env`：
+首次创建知识 Agent 只需要以下两个配置文件：
+
+```bash
+cp muye-llm/.env.example muye-llm/.env
+cp tools/agent_creation/.env.example tools/agent_creation/.env
+```
+
+`muye-llm/.env` 配置 Chat、Embedding 上游地址、密钥和模型 alias。资料项目的 `project.yaml` 中的 `chat_model_alias`、`embedding_model_alias` 必须已注册在 `MUYE_LLM_MODELS_JSON`、`MUYE_LLM_EMBED_MODELS_JSON` 中。`tools/agent_creation/.env` 配置创建工具到已启动服务的连接：
+
+```dotenv
+MUYE_KNOWLEDGE_LLM_BASE_URL=http://127.0.0.1:9850
+MUYE_KNOWLEDGE_MILVUS_URI=http://127.0.0.1:19530
+MUYE_KNOWLEDGE_MILVUS_TOKEN=
+```
+
+已有 Milvus 时，将 `MUYE_KNOWLEDGE_MILVUS_URI` 改为已有服务地址，并在启用鉴权时设置 token。不要把模型密钥、Milvus token 或连接串写进 `project.yaml`。
+
+运行完整系统前，分别创建需要启动模块的 `.env`：
 
 ```bash
 cp muye-llm/.env.example muye-llm/.env
@@ -106,7 +133,92 @@ Shell 环境变量 > 当前服务目录 .env > 源码默认值
 使用 `tools/agent_catalog/.env`。确认模块可独立启动后，再自行删除旧根 `.env`；根启动器和
 `muye.sh` 均不会读取它。
 
-## 启动
+## 快速创建知识 Agent
+
+本节是从资料到本地可调用 Agent 的推荐路径。完整字段、OCR、手动审批和故障处理见[一键创建和测试知识 Agent](docs/agent-creation-quickstart.md)。
+
+### 1. 启动 `muye-llm`
+
+创建流程需要可用的 Chat 和 Embedding 服务。先完成上节 `muye-llm/.env` 配置，再启动：
+
+```bash
+cd muye-llm
+../.venv/bin/python main.py
+```
+
+在另一个终端确认健康状态和模型 alias：
+
+```bash
+curl --noproxy "*" http://127.0.0.1:9850/health
+curl --noproxy "*" http://127.0.0.1:9850/api/v2/models
+```
+
+### 2. 选择 Milvus 环境
+
+若已有 Milvus，只需在 `tools/agent_creation/.env` 设置其 URI 和可选 token。不要执行本地 Compose；本项目不会管理已有的独立或托管 Milvus。
+
+若没有 Milvus，使用本地启动器：
+
+```bash
+./poc/phase1/milvus/start-local.sh
+```
+
+该脚本首次运行时生成随机 MinIO 本地凭据，保存到被 Git 忽略且权限为 `0600` 的 `poc/phase1/milvus/.env`，随后通过 Docker Compose 启动 etcd、MinIO 和 Milvus。MinIO 是 Milvus standalone 的对象存储后端，用于持久化 segment、索引和日志；它不存放 Agent 的原始资料，也不是 citation 的来源。
+
+### 3. 准备资料目录
+
+资料项目必须在 `agents/` 之外。生成结果会写入 `agents/agent-<slug>/`，因此该目录不能预先存在。
+
+```text
+agent-projects/<slug>/
+├── project.yaml
+└── sources/
+    └── <document>.md
+```
+
+`project.yaml` 至少包含 Agent 身份、目标、禁止行为和示例；Markdown/TXT 可直接处理，DOCX/PDF 需要对应的解析依赖。项目字段、OCR 和批处理配置见[快速开始](docs/agent-creation-quickstart.md)。
+
+### 4. 自动审批生成
+
+在 Scaffold 根目录运行：
+
+```bash
+./scripts/muye.sh agent prepare agent-projects/<slug> \
+  --auto-approve \
+  --approved-by <reviewer>
+```
+
+命令会生成计划和审批记录，构建不可变 Milvus Collection，执行 Dense、Keyword、Hybrid 检索评测，发布 active Resource Snapshot，生成 `agents/agent-<slug>/`，并运行生成 Agent 的契约测试。`--auto-approve` 只跳过人工审阅停顿，不会绕过资料漂移检查、Embedding、Milvus 构建或评测门禁。
+
+构建失败时，CLI 会输出 Knowledge Job ID、错误码和报告路径。优先检查：Embedding 上游是否可用、模型 alias 是否注册、Milvus 是否可访问，以及资料是否包含评测所需依据。
+
+### 5. 一键本地测试
+
+进入生成目录并启动：
+
+```bash
+cd agents/agent-<slug>
+./run-local.sh
+```
+
+`run-local.sh` 会复用或启动本地 `muye-llm`、`muye-data` 和当前 Agent；首次运行会创建该 Agent 的本地 `.env`，生成互不相同的 Main、Control、Data token 及运行身份字段。脚本不会启动 Milvus，且当前本地测试配置使用 `127.0.0.1:19530`；使用远程 Milvus 时应按部署环境管理 `muye-data`，而不是将远程数据库纳入本地测试脚本。
+
+启动成功后，脚本会输出带鉴权的 `/invoke` 命令。示例：
+
+```bash
+curl --noproxy "*" http://127.0.0.1:8000/health
+
+curl --noproxy "*" -X POST http://127.0.0.1:8000/invoke \
+  -H "Authorization: Bearer $(sed -n 's/^MUYE_AGENT_MAIN_TOKEN=//p' .env)" \
+  -H "Content-Type: application/json" \
+  -d '{"task":"请根据资料回答一个问题。","context":{"user_id":"local_user","session_id":"local_session"}}'
+```
+
+回答中应包含检索工具调用和 citations。资料没有依据时，Agent 必须明确说明无法确认，不能编造业务规则。日志位于生成目录的 `run-local-agent.log`、`run-local-muye-llm.log` 和 `run-local-muye-data.log`。
+
+需要审阅计划、处理复杂变更或接入 CI 时，再使用手动 `agent prepare` 与 `agent create` 命令；详见[快速开始的高级用法](docs/agent-creation-quickstart.md#高级用法手动审批)。
+
+## 启动完整系统
 
 ### 方式一：一键启动全部服务
 
@@ -177,11 +289,9 @@ PYTHONPATH=agents/agent-main \
 muye-gateway/scripts/smoke-test.sh
 ```
 
-## 模板 Agent 生成
+## 高级 Generator 与迁移
 
-首次仅从资料文件创建知识 Agent 时，使用[两步创建知识 Agent](docs/agent-creation-quickstart.md)。该流程以项目目录中的资料为输入，在评测通过后生成 `agents/agent-<slug>/`；项目目录必须位于 `agents/` 之外。它使用 `muye-llm/.env` 中的模型与上游凭据，以及 `tools/agent_creation/.env` 中的 LLM/Milvus 连接。
-
-以下命令是已有逻辑配置的高级生成、CI 与迁移入口：
+上文的自动审批流程面向首次从资料生成知识 Agent。以下命令面向已有逻辑配置的高级生成、CI 与迁移：
 
 v2.0 的知识 Agent 由本地、确定性 Generator 生成，首次产物位于
 `agents/agent-<slug>/`。Generator 只读取版本控制中的逻辑 Resource、Retrieval Skill 和已确认 Profile；
