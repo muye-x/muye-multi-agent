@@ -1,0 +1,14 @@
+schema_version: muye.ai/agent-project/v1
+slug: hotel-employee
+agent_id: agent_hotel_employee
+display_name: 酒店员工手册助手
+objective: 根据员工手册回答制度问题，并提供来源引用。
+chat_model_alias: deepseek-v4-flash
+embedding_model_alias: text-embedding-v3
+embedding_batch_size: 8
+prohibited_actions:
+  - 不得把模型常识冒充手册规定
+  - 没有检索依据时不得猜测
+  - 不执行请假审批或工资调整
+examples:
+  - 请事假需要提前多久申请？

@@ -1,37 +1,73 @@
-# 两步创建知识 Agent
+# 一键创建和测试知识 Agent
 
-本指南面向只持有资料文件、希望生成本地可测试 Agent 源码的使用者。该流程不会构建镜像、部署容器或授予用户访问权限；文中的 `<slug>`、`<agent_id>` 和 `<document>` 均为使用者自行替换的占位符。
+本指南面向已有资料文件、希望在本地生成并立即测试知识 Agent 的使用者。推荐工作流只有两次操作：先使用自动审批模式生成 Agent，再在生成目录执行 `run-local.sh` 启动并测试它。
 
-## `muye.sh` 简要说明
+```text
+准备本地依赖和配置
+        ↓
+agent prepare --auto-approve
+        ↓
+agents/agent-<slug>/run-local.sh
+```
 
-`./scripts/muye.sh` 是 Scaffold 的统一入口，在 Scaffold 根目录执行。`agent prepare` 只解析资料、生成可审阅计划；`agent create` 在人工确认 checksum 后才写入 Milvus、运行发布前检索评测并生成源码。其他常用命令包括：`up`、`down`、`restart` 管理 Compose 服务，`status` 查看服务状态，`logs <service>` 查看日志，`doctor` 检查本地依赖，`smoke` 执行系统冒烟检查。通过 `./scripts/muye.sh agent --help` 查看 Agent 子命令参数。
+自动审批只省去人工确认计划的停顿；资料漂移检查、Milvus 构建、检索评测、Snapshot 发布和生成后的契约测试仍然必须通过。流程不会构建镜像、部署容器或授予终端用户访问权限。
 
-## 前置准备
+## 1. 准备配置
 
-创建流程需要一个可用的 `muye-llm` 和可访问的 Milvus。按模块分别配置，根目录 `.env` 不参与此流程：
+在 Scaffold 根目录使用已有的 `.venv`。创建流程不读取根目录 `.env`，而是读取各模块自己的 `.env`。
 
-1. 将 `muye-llm/.env.example` 复制为 `muye-llm/.env`，配置 Chat、Embedding 上游凭据和模型注册；`project.yaml` 默认使用的 `chat-default` 与 `text-embedding-default` 必须已注册。
-2. 启动 `muye-llm`，并确认其地址可由本机访问。默认地址是 `http://127.0.0.1:9850`。
-3. 将 `tools/agent_creation/.env.example` 复制为 `tools/agent_creation/.env`，填写该流程使用的 LLM 地址、Milvus 地址，以及需要时的 Milvus token。
+```bash
+cp muye-llm/.env.example muye-llm/.env
+cp tools/agent_creation/.env.example tools/agent_creation/.env
+```
 
-`muye-llm/.env` 管理上游 LLM 与 Embedding 密钥；`tools/agent_creation/.env` 只管理创建流程到已启动服务的连接，不能把密钥或数据库连接写入项目 YAML。
+编辑 `muye-llm/.env`，配置 Chat 和 Embedding 的 OpenAI-compatible 上游地址、密钥与模型注册表。项目的 `project.yaml` 中声明的 `chat_model_alias` 和 `embedding_model_alias` 必须是 `MUYE_LLM_MODELS_JSON` 与 `MUYE_LLM_EMBED_MODELS_JSON` 中已经注册的 alias。
 
-## 项目目录
+`tools/agent_creation/.env` 只配置创建工具到本地服务的连接。默认值适用于本机运行：
 
-创建一个项目目录，并将 Markdown、TXT、DOCX 或 PDF 放入 `sources/`。项目目录必须位于 `agents/` 之外，因为 `agents/agent-<slug>/` 是 `create` 的最终输出目录，不能预先存放项目文件。
+```dotenv
+MUYE_KNOWLEDGE_LLM_BASE_URL=http://127.0.0.1:9850
+MUYE_KNOWLEDGE_MILVUS_URI=http://127.0.0.1:19530
+```
+
+不要把密钥或数据库连接串写进 `project.yaml`。
+
+## 2. 启动本地依赖
+
+先启动 `muye-llm`。保持该终端运行，或使用你的进程管理工具后台运行它：
+
+```bash
+cd muye-llm
+../.venv/bin/python main.py
+```
+
+在另一个终端确认服务和模型注册可用：
+
+```bash
+curl --noproxy "*" http://127.0.0.1:9850/health
+curl --noproxy "*" http://127.0.0.1:9850/api/v2/models
+```
+
+接着选择 Milvus 环境：
+
+- 已有 Milvus：将 `MUYE_KNOWLEDGE_MILVUS_URI` 改为已有服务地址；服务启用鉴权时，再设置 `MUYE_KNOWLEDGE_MILVUS_TOKEN`。不要执行本地 Compose 脚本。
+- 没有 Milvus：使用仓库提供的本地启动脚本。Milvus standalone 使用 MinIO 保存对象和索引；脚本会在首次运行时生成随机本地凭据，写入被 Git 忽略且权限为 `0600` 的 `poc/phase1/milvus/.env`，后续运行复用它。
+
+```bash
+./poc/phase1/milvus/start-local.sh
+```
+
+完成 Agent 生成后再执行 `run-local.sh`。它会启动或复用 `muye-llm`、`muye-data` 和当前 Agent，但不会启动 Milvus。
+
+## 3. 准备资料项目
+
+资料项目位于 `agent-projects/`，但生成后的源码位于 `agents/agent-<slug>/`。两者不能混用，且目标 Agent 目录不能预先存在。
 
 ```text
 agent-projects/<slug>/
 ├── project.yaml
 └── sources/
     └── <document>.md
-```
-
-只有一个 Markdown 文件时，可先执行：
-
-```bash
-mkdir -p agent-projects/<slug>/sources
-cp /path/to/<document>.md agent-projects/<slug>/sources/
 ```
 
 最小 `project.yaml`：
@@ -50,80 +86,68 @@ examples:
   - <一个典型领域问题>
 ```
 
-Markdown 与 TXT 无需 Docling；DOCX/PDF 需要 Docling，扫描 PDF 还需要在 `project.yaml` 中启用 `ocr_available: true` 并提供 OCR capability。Embedding 默认每批发送 16 个 chunk；已知上游支持更小或更大批量时，可在 `project.yaml` 设置 `embedding_batch_size`（1 至 256）。
+Markdown 与 TXT 可直接处理。DOCX/PDF 需要 Docling；扫描 PDF 还需在 `project.yaml` 启用 `ocr_available: true` 并提供相应 OCR capability。`embedding_batch_size` 可按上游模型限制设置为 `1` 到 `256`。
 
-## 生成计划
+## 4. 一键生成
 
-确认 `muye-llm` 与 Milvus 可用后，执行：
-
-```bash
-./scripts/muye.sh agent prepare agent-projects/<slug>
-```
-
-该命令校验模型 alias、解析资料和生成 chunk；LLM 只提出 Profile 与评测用例，输出会保存为 `config/generated/agent-creation-plans/<slug>/current.json`。审阅其中的职责边界、评测问题、`summary.evaluation_evidence` 中的来源定位与摘录、以及预计规模。此步骤不会写入 Milvus，也不会写入或覆盖 `config/knowledge-*`、`config/agents` 中的兼容配置。
-
-需要由已指定审核人直接确认当前计划时，可将两步合并为一次命令：
+回到 Scaffold 根目录，使用自动审批命令创建 Agent：
 
 ```bash
 ./scripts/muye.sh agent prepare agent-projects/<slug> \
   --auto-approve \
-  --approved-by <principal>
+  --approved-by <reviewer>
 ```
 
-该模式会先生成计划，再以本次生成的完整 checksum 执行 `create`；`<principal>` 会写入 creation、schema、resource、skill 和 profile 审批记录。它会跳过人工审阅计划的停顿，但不会跳过资料漂移复核、Milvus 构建、检索评测或生成后契约测试。`--approved-by` 只能与 `--auto-approve` 一起使用。
+该命令会依次完成：解析资料、生成 Profile 和评测计划、写入 `<reviewer>` 的审批记录、构建不可变 Milvus Collection、执行 Dense/Keyword/Hybrid 检索评测、发布 active Resource Snapshot、生成 `agents/agent-<slug>/`，并执行生成 Agent 的契约测试。
 
-若 `agents/agent-<slug>/` 已存在但缺少 `agent.yaml`，它不是可复用的生成产物。创建命令会拒绝覆盖，以保护其中可能存在的 `.env`；先将该目录移动到项目外的备份位置，再重新执行创建命令。
-
-## 确认并创建
-
-确认计划后，使用输出中的完整 checksum 执行：
-
-```bash
-./scripts/muye.sh agent create agent-projects/<slug> \
-  --plan-checksum <checksum> \
-  --approved-by <principal>
-```
-
-命令会复核项目未漂移，构建不可变 Collection，自动启动仅监听 loopback 的 candidate `muye-data`，完成 Dense、Keyword 和 Hybrid 评测。评测 Job 的状态必须为 `SUCCEEDED`，才会发布 Snapshot、生成 `agents/agent-<slug>/` 并运行其契约测试。若已有同 slug 的高级配置且其内容不同，命令会拒绝覆盖并报告冲突；请改用新的 slug 或明确迁移原配置。
-
-评测失败时不会发布新 Snapshot 或生成 Agent；根据 Job 报告调整资料结构、项目声明或评测计划后重新运行 `prepare`。生成后的契约测试失败时，可使用相同 checksum 重跑 `agent create`；它会验证目录仍精确对应同一计划，再仅重跑校验和测试，不覆盖目录。生成成功后的项目目录仍保留在 `agent-projects/`，生成源码位于 `agents/agent-<slug>/`。
-
-生成目录包含 `.env.example`。本地启动 Agent 前复制为 `.env`，填写 LLM/Data 地址、部署身份和三个互不相同的内部 token；真实 token 只保存在该模块的 `.env` 或由部署环境注入，不能写入 `agent.yaml`、项目资料或 Git。
-
-## 生成后的三层测试
-
-进入生成目录后，按以下顺序执行。第一项离线执行；后两项只读访问已发布 Snapshot 与已启动的 `muye-llm`，不会重新写入 Milvus。
+成功后直接进入生成目录：
 
 ```bash
 cd agents/agent-<slug>
-../../.venv/bin/python -m pytest -q tests/test_contract.py
 ```
 
-`test_contract.py` 检查生成描述符、固定资源、模型预算和 SDK 协议，不验证问答质量。
+如果构建失败，CLI 会输出 Knowledge Job ID、错误码和报告路径。常见原因是 Embedding 上游不可达、Milvus 未启动、模型 alias 未注册或资料/评测不满足发布门禁；修正问题后重新运行同一条自动审批命令。
 
-为后两项测试启动一个仅监听 loopback 的 `muye-data`。在另一个终端执行：
+## 5. 一键启动和测试
+
+在生成目录执行：
 
 ```bash
-cd muye-data
-set -a
-source .env
-set +a
-MUYE_DATA_HOST=127.0.0.1 \
-MUYE_DATA_PORT=19840 \
-MUYE_DATA_CONFIG_PATH=../config/generated/agent-creation-candidates/<slug>.yaml \
-MUYE_DATA_RESOURCE_SNAPSHOT_PATH=../config/generated/resource-snapshot.json \
-MUYE_DATA_AGENT_AUTH_ENABLED=false \
-../.venv/bin/python main.py
+./run-local.sh
 ```
 
-若 Milvus 要求 token，还应在启动前将其映射到 candidate 配置使用的 `MUYE_KNOWLEDGE_MILVUS_TOKEN`，不要在命令或项目 YAML 中写入实际值。确认 `muye-llm` 已运行后，在 Agent 目录执行：
+脚本会执行以下操作：
+
+- 复用或启动本地 `muye-llm`；
+- 使用 active Resource Snapshot 复用或启动仅监听 `127.0.0.1:9840` 的 `muye-data`；
+- 首次创建 Agent 本地 `.env`，生成三个互不相同的内部 token 和运行身份字段；
+- 以服务方式启动当前 Agent；
+- 在控制台输出 `/health` 和带鉴权的 `/invoke` 命令。
+
+直接使用脚本输出的命令，或执行以下示例：
 
 ```bash
-export MUYE_TEST_DATA_BASE_URL=http://127.0.0.1:19840
-export MUYE_TEST_LLM_BASE_URL=http://127.0.0.1:9850
+curl --noproxy "*" http://127.0.0.1:8000/health
 
-../../.venv/bin/python -m pytest -q tests/test_retrieval.py
-../../.venv/bin/python -m pytest -q tests/test_e2e.py
+curl --noproxy "*" -X POST http://127.0.0.1:8000/invoke \
+  -H "Authorization: Bearer $(sed -n 's/^MUYE_AGENT_MAIN_TOKEN=//p' .env)" \
+  -H "Content-Type: application/json" \
+  -d '{"task":"请根据资料回答一个问题。","context":{"user_id":"local_user","session_id":"local_session"}}'
 ```
 
-`test_retrieval.py` 复跑创建时固化的评测集，验证 Dense、Keyword、Hybrid 的 Recall、MRR 和引用覆盖率。`test_e2e.py` 从评测集选择一个问题，通过 Agent 的 internal `/invoke` 入口验证真实回答、检索工具调用和可信引用。未设置测试服务地址时，这两项会明确标记为 skipped，不会隐式访问网络。
+`/invoke` 返回 `tool_calls_made`、回答和 citations。资料没有足够依据时，Agent 应明确说明无法确认，而不是编造答案。
+
+日志位于生成目录的 `run-local-agent.log`、`run-local-muye-llm.log` 和 `run-local-muye-data.log`。`.env` 包含本地 token，不应提交或粘贴到终端记录之外；需要轮换本地 token 时，删除该 Agent 的 `.env` 后重新执行 `./run-local.sh`。
+
+## 高级用法：手动审批
+
+只有在需要审阅模型生成的计划、定位资料问题或接入 CI 时，才使用手动两步流程：
+
+```bash
+./scripts/muye.sh agent prepare agent-projects/<slug>
+./scripts/muye.sh agent create agent-projects/<slug> \
+  --plan-checksum <prepare 输出的完整 checksum> \
+  --approved-by <reviewer>
+```
+
+`prepare` 生成的可审阅计划保存在 `config/generated/agent-creation-plans/<slug>/current.json`。手动模式与自动审批模式使用相同的构建、评测和生成门禁；区别只在于审批发生的时机。

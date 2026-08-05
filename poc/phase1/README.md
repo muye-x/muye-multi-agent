@@ -21,24 +21,21 @@ SDK v2 标准模板，阶段 3 才提供正式 Generator。
 `milvus/compose.yaml` 仅用于手工验证真实 Milvus Hybrid 环境：
 
 ```bash
-read -r -p "MinIO user: " PHASE1_MINIO_ROOT_USER
-read -r -s -p "MinIO password: " PHASE1_MINIO_ROOT_PASSWORD
-export PHASE1_MINIO_ROOT_USER PHASE1_MINIO_ROOT_PASSWORD
-docker compose -f poc/phase1/milvus/compose.yaml -p muye-phase1-milvus up -d
+./poc/phase1/milvus/start-local.sh
 ```
 
-MinIO 只在数据卷首次创建时使用该凭据。保留同一终端的环境变量以执行后续 `restart`；若凭据已丢失，
-不要生成新密码后直接重启已有卷。此 PoC 的数据可丢弃，应先执行下面命令删除该 Compose project 的三个
-命名卷，再使用新凭据重新启动：
+首次运行会生成随机 MinIO 凭据并保存至被 Git 忽略的 `poc/phase1/milvus/.env`；MinIO 只在数据卷首次创建时使用这组凭据。不要删除或改写该文件后直接重启已有卷。此 PoC 的数据可丢弃，若需要重新初始化，先执行下面命令删除该 Compose project 的三个命名卷，再删除 `.env` 并重新运行启动脚本：
 
 ```bash
-PHASE1_MINIO_ROOT_USER=cleanup \
-PHASE1_MINIO_ROOT_PASSWORD=cleanup-password \
-  docker compose -f poc/phase1/milvus/compose.yaml -p muye-phase1-milvus down -v
+docker compose \
+  --env-file poc/phase1/milvus/.env \
+  -f poc/phase1/milvus/compose.yaml \
+  -p muye-phase1-milvus \
+  down -v
+rm -f poc/phase1/milvus/.env
 ```
 
-这两个占位值只用于让 Compose 解析清理配置，不会启动或修改现有 MinIO 账号；`down -v` 会删除全部阶段 1
-临时数据卷。
+`down -v` 会删除全部阶段 1 临时数据卷。
 
 其 `muye-data.config.yaml` 使用逻辑资源 `product_handbook`、Dense + BM25/Sparse Hybrid 配置和固定
 `knowledge_id` 过滤字段。该环境需要由外部 seed 工具创建 Collection、BM25 Function 与索引；PoC 不在

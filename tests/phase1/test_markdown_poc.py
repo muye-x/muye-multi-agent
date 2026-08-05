@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -152,6 +153,22 @@ def test_milvus_poc_files_keep_hybrid_resource_and_local_only_port() -> None:
     assert resource["pipelines"]["hybrid"]["type"] == "hybrid"
     assert resource["fields"]["filterable_fields"] == {"knowledge_id": "knowledge_id"}
     assert all(len(document["embedding"]) == EMBEDDING_DIMENSIONS for document in _DOCUMENTS)
+
+
+def test_local_milvus_start_script_generates_ignored_credentials_and_uses_compose_env_file() -> None:
+    """本地启动器不得在 Compose 或脚本中硬编码 MinIO 凭据。"""
+    script = PROJECT_ROOT / "poc" / "phase1" / "milvus" / "start-local.sh"
+
+    assert script.is_file()
+    assert script.stat().st_mode & 0o111
+    syntax_check = subprocess.run(["bash", "-n", str(script)], check=False, capture_output=True, text=True)
+    assert syntax_check.returncode == 0, syntax_check.stderr
+
+    source = script.read_text(encoding="utf-8")
+    assert "secrets.token_urlsafe" in source
+    assert "--env-file" in source
+    assert "umask 077" in source
+    assert "chmod 600" in source
 
 
 def test_hybrid_verifier_declares_bm25_sparse_index_and_scope_filter() -> None:
