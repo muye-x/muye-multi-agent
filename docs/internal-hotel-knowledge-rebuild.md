@@ -281,7 +281,121 @@ cd /opt/muye/scaffold
 
 第一条输出对应 `MUYE_AGENT_DESCRIPTOR_CHECKSUM`，第二条输出对应 `MUYE_AGENT_SOURCE_TREE_CHECKSUM`。这不是 Catalog 部署的替代品；它只保证内部直连测试的 Agent identity 与本地源码一致。
 
-## 8. 用 systemd 守护服务
+## 8. 仅运行酒店 Agent 的 Docker 打包与部署
+
+同机测试使用三个容器：`muye-llm`、`muye-data` 和 `agent-hotel-employee`。只有 Agent 的 `8000` 端口映射到宿主机，供 Hermes 调用；`9850` 和 `9840` 只在 Docker 网络内可见。不会启动 MainAgent、Gateway、Control、PostgreSQL 或 Dashboard。
+
+酒店 Agent 使用自身目录的 Dockerfile；`muye-llm` 和 `muye-data` 使用仓库已有根 Dockerfile，并通过不同启动命令运行。这与项目现有 Compose 的实现一致。
+
+### 运行前准备
+
+- Docker Engine 与 Docker Compose Plugin 已安装。
+- 构建环境可访问 Python 包安装源和 `muye-multi-agent-sdk` 的固定 `v2.0.0` 来源；离线环境应预先准备内部基础镜像和包镜像。
+- 已完成第 1 至第 7 节的知识构建和评测，`config/generated/resource-snapshot.json` 已存在。
+- 在 `/etc/muye/` 创建三个权限为 `0600` 的环境文件：`muye-llm.env`、`muye-data.env`、`agent-hotel-employee.env`。它们不进入镜像，也不提交 Git。
+
+`muye-llm.env` 基于 `muye-llm/.env.example` 填写真实模型与 Embedding 凭据。`MUYE_LLM_EMBED_MODELS_JSON` 必须含 `text-embedding-v3`，且维度为 `1024`。
+
+`muye-data.env` 至少包含：
+
+```text
+MUYE_DATA_MILVUS_TOKEN=<只读 Milvus token>
+MUYE_DATA_RESOURCE_SNAPSHOT_PATH=/app/config/generated/resource-snapshot.json
+MUYE_DATA_AGENT_AUTH_ENABLED=false
+```
+
+`agent-hotel-employee.env` 使用第 7 节的 token、service/deployment identity 和两个 checksum；无需设置 `MUYE_LLM_BASE_URL`、`MUYE_SDK_DATA_BASE_URL`，Compose 会固定写入容器服务名。
+
+在 `/opt/muye/scaffold/compose.hermes.yaml` 创建以下精简 Compose 文件。`<agent-internal-ip>` 替换为 Hermes 可访问的具体内网 IP；不要使用公网 IP 或 `0.0.0.0`。
+
+```yaml
+services:
+  muye-llm:
+    build: .
+    command: ["python", "muye-llm/main.py"]
+    env_file: /etc/muye/muye-llm.env
+    environment:
+      MUYE_LLM_HOST: 0.0.0.0
+    restart: unless-stopped
+
+  muye-data:
+    build: .
+    command: ["python", "muye-data/main.py"]
+    env_file: /etc/muye/muye-data.env
+    environment:
+      MUYE_DATA_HOST: 0.0.0.0
+      MUYE_DATA_LLM_BASE_URL: http://muye-llm:9850
+      MUYE_DATA_AGENT_AUTH_ENABLED: "false"
+    volumes:
+      - ./muye-data/config.yaml:/app/muye-data/config.yaml:ro
+      - ./config/generated:/app/config/generated:ro
+    depends_on:
+      - muye-llm
+    restart: unless-stopped
+
+  hotel-employee:
+    build:
+      context: ./agents/agent-hotel-employee
+      args:
+        MUYE_AGENT_BASE_IMAGE: <approved-python-image@sha256:...>
+    env_file: /etc/muye/agent-hotel-employee.env
+    environment:
+      MUYE_LLM_BASE_URL: http://muye-llm:9850
+      MUYE_SDK_DATA_BASE_URL: http://muye-data:9840
+      MUYE_SDK_API_PROFILES: internal
+    ports:
+      - "<agent-internal-ip>:8000:8000"
+    depends_on:
+      - muye-llm
+      - muye-data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+```
+
+`<approved-python-image@sha256:...>` 必须替换为已批准的 Python 3.11 slim 基础镜像 manifest digest。酒店 Agent 的 `.dockerignore` 会排除 `.env`、日志、缓存和证书。根镜像仅用于 `muye-llm` 与 `muye-data` 的运行；Compose 中没有任何 Main 或 Gateway 服务。
+
+`muye-data/config.yaml` 必须只声明目标内网 Milvus connection，例如：
+
+```yaml
+version: 1
+connections:
+  milvus_default:
+    type: milvus
+    uri: http://<milvus-host>:19530
+    token_env: MUYE_DATA_MILVUS_TOKEN
+    database: default
+resources: {}
+```
+
+启动、查看状态和查看日志：
+
+```bash
+cd /opt/muye/scaffold
+docker compose -f compose.hermes.yaml up -d --build
+docker compose -f compose.hermes.yaml ps
+docker compose -f compose.hermes.yaml logs --tail=100
+```
+
+确认依赖就绪后由 Hermes 调用 Agent：
+
+```bash
+curl --fail-with-body http://<agent-internal-ip>:8000/invoke \
+  -H 'Authorization: Bearer <MUYE_AGENT_MAIN_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  --data '{"task":"入职需要提交哪些证件？","context":{"user_id":"hermes-test-user","session_id":"docker-smoke-001","trace_id":"docker-smoke-001"}}'
+```
+
+停止整个测试栈：
+
+```bash
+docker compose -f compose.hermes.yaml down
+```
+
+这个 Docker 栈绕过 Catalog、用户 grant 和 Control citation 投影，仅适用于 Hermes 内部测试。`MUYE_AGENT_MAIN_TOKEN` 是 Hermes 的服务端密钥，不能放入浏览器、前端代码或普通用户请求中。
+
+## 9. 用 systemd 守护服务
 
 内部测试至少应以 `systemd` 守护 `muye-llm`、运行时 `muye-data` 与 `agent-hotel-employee`。下面是酒店 Agent 的示例单位；其他两个服务沿用相同模式，替换 `WorkingDirectory`、`EnvironmentFile` 和启动命令。
 
@@ -320,7 +434,7 @@ journalctl -u muye-hotel-employee.service -f
 
 只允许 Hermes 所在网段访问 Agent 的 `8000` 端口；`muye-llm`、`muye-data` 和候选服务保持 loopback 或仅内部服务网段可见。
 
-## 9. 最终验证与回滚
+## 10. 最终验证与回滚
 
 用已通过评测的问题调用 Agent，确认返回答案及引用。请求必须包含 Agent 的 Main token；下例仅展示结构。
 
