@@ -1,0 +1,28 @@
+schema_version: muye.ai/agent-descriptor/v1
+agent_id: "agent_hotel_employee"
+slug: "hotel-employee"
+tool_name: hotel_employee_agent
+display_name: "酒店员工手册助手"
+version: "0.1.0"
+description: "根据muye大酒店员工手册回答制度问题，并提供来源引用。"
+supported_intents: ["查询入职要求","查询转正流程","查询晋升政策","查询辞退情形","查询离职工资发放","查询薪资调整依据","查询排班与调班规则","查询加班处理方式","查询请假流程与规定","查询工伤假规定","查询产假规定","查询休假工资发放","查询客用设施使用规定","查询吸烟管理规定","查询保密制度","查询员工衣柜规定","查询制服管理","查询员工告示栏","查询消防设备检查要求","查询灭火器适用范围"]
+entrypoint: main:app
+api_profile: internal
+protocol_version: muye-agent-internal/3.0
+model_alias: "deepseek-v4-flash"
+resources:
+  - resource_id: "kb.hotel_employee"
+    skill_ref: "retrieval/hotel-employee@1"
+runtime:
+  internal_port: 8000
+  timeout_seconds: 30
+  token_budget: 8192
+  tool_budget: 4
+  max_concurrency: 2
+  memory_limit: 512m
+deployment:
+  enabled: false
+source:
+  template_id: react-knowledge
+  template_version: 1.0.2
+  provenance_file: .muye-generation.json

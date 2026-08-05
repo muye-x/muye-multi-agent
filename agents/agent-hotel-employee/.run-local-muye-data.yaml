@@ -1,0 +1,6 @@
+version: 1
+connections:
+  milvus_default:
+    type: milvus
+    uri: http://127.0.0.1:19530
+resources: {}
