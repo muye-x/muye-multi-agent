@@ -56,9 +56,6 @@ curl --noproxy "*" http://127.0.0.1:9850/api/v2/models
 ```bash
 ./poc/phase1/milvus/start-local.sh
 ```
-
-完成 Agent 生成后再执行 `run-local.sh`。它会启动或复用 `muye-llm`、`muye-data` 和当前 Agent，但不会启动 Milvus。
-
 ## 3. 准备资料项目
 
 资料项目位于 `agent-projects/`，但生成后的源码位于 `agents/agent-<slug>/`。两者不能混用，且目标 Agent 目录不能预先存在。
@@ -98,6 +95,12 @@ Markdown 与 TXT 可直接处理。DOCX/PDF 需要 Docling；扫描 PDF 还需�
   --approved-by <reviewer>
 ```
 
+示例：
+```bash
+ ./scripts/muye.sh agent prepare agent-projects/hotel-employee \
+  --auto-approve \
+  --approved-by jimmy
+```
 该命令会依次完成：解析资料、生成 Profile 和评测计划、写入 `<reviewer>` 的审批记录、构建不可变 Milvus Collection、执行 Dense/Keyword/Hybrid 检索评测、发布 active Resource Snapshot、生成 `agents/agent-<slug>/`，并执行生成 Agent 的契约测试。
 
 成功后直接进入生成目录：
