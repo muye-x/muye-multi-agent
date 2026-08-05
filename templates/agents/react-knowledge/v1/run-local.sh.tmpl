@@ -19,6 +19,24 @@ fi
 
 cd "${workspace_root}"
 
+data_config_path="${agent_directory}/.run-local-muye-data.yaml"
+if [[ -L "${data_config_path}" || ( -e "${data_config_path}" && ! -f "${data_config_path}" ) ]]; then
+  printf 'error: local muye-data configuration must be a regular file: %s\n' "${data_config_path}" >&2
+  exit 1
+fi
+if [[ ! -f "${data_config_path}" ]]; then
+  (
+    umask 077
+    printf '%s\n' \
+      'version: 1' \
+      'connections:' \
+      '  milvus_default:' \
+      '    type: milvus' \
+      '    uri: http://127.0.0.1:19530' \
+      'resources: {}' >"${data_config_path}"
+  )
+fi
+
 wait_for_http() {
   local url="$1"
   local service_name="$2"
@@ -129,7 +147,12 @@ if ! curl --noproxy '*' --fail --silent --max-time 2 "${data_health_url}" >/dev/
   printf 'starting muye-data; log: %s\n' "${data_log_path}"
   (
     cd "${workspace_root}/muye-data"
-    MUYE_DATA_RESOURCE_SNAPSHOT_PATH="${snapshot_path}" exec "${python_executable}" main.py
+    MUYE_DATA_HOST=127.0.0.1 \
+    MUYE_DATA_PORT=9840 \
+    MUYE_DATA_CONFIG_PATH="${data_config_path}" \
+    MUYE_DATA_RESOURCE_SNAPSHOT_PATH="${snapshot_path}" \
+    MUYE_DATA_AGENT_AUTH_ENABLED=false \
+      exec "${python_executable}" main.py
   ) >"${data_log_path}" 2>&1 &
   if ! wait_for_http "${data_health_url}" "muye-data"; then
     tail -n 80 "${data_log_path}" >&2 || true

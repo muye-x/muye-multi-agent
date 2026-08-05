@@ -21,7 +21,7 @@ def test_react_knowledge_template_declares_a_pinned_sdk_and_digest_only_base_ima
 
     assert manifest == {
         "template_id": "react-knowledge",
-        "template_version": "1.0.1",
+        "template_version": "1.0.2",
         "sdk_version": "2.0.0",
         "sdk_version_specifier": "==2.0.0",
         "base_image_build_arg": "MUYE_AGENT_BASE_IMAGE",
@@ -76,6 +76,9 @@ def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime
     for value in (
         "muye-llm",
         "muye-data",
+        ".run-local-muye-data.yaml",
+        "MUYE_DATA_CONFIG_PATH",
+        "MUYE_DATA_AGENT_AUTH_ENABLED=false",
         "uvicorn main:app",
         "Authorization: Bearer $(sed",
         "/invoke",
