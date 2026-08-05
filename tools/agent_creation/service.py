@@ -208,10 +208,16 @@ class AgentCreationService:
                 ocr_available=project.ocr_available,
                 llm_base_url=self._llm_base_url,
             )
-            if build.manifest is None:
-                raise RuntimeError("知识构建失败；请查看 Knowledge Job 报告")
-            if worker.status(build.job_id)["status"] != "SUCCEEDED":
-                raise RuntimeError("知识构建未成功完成；请查看 Knowledge Job 报告")
+            build_status = worker.status(build.job_id)
+            if build.manifest is None or build_status["status"] != "SUCCEEDED":
+                raise RuntimeError(
+                    self._job_failure_message(
+                        "知识构建",
+                        job_id=build.job_id,
+                        status=build_status,
+                        report_path=getattr(build, "report_path", None),
+                    )
+                )
             run = self._update_run(run, stage="evaluate")
             if runner is None:
                 with CandidateDataService(
@@ -225,8 +231,16 @@ class AgentCreationService:
                     evaluation = worker.evaluate(slug=project.slug, data_base_url=candidate.base_url)
             else:
                 evaluation = worker.evaluate(slug=project.slug, runner=runner)
-            if evaluation.manifest is None or worker.status(evaluation.job_id)["status"] != "SUCCEEDED":
-                raise RuntimeError("检索评测未通过；active Snapshot 未发布")
+            evaluation_status = worker.status(evaluation.job_id)
+            if evaluation.manifest is None or evaluation_status["status"] != "SUCCEEDED":
+                raise RuntimeError(
+                    self._job_failure_message(
+                        "检索评测",
+                        job_id=evaluation.job_id,
+                        status=evaluation_status,
+                        report_path=getattr(evaluation, "report_path", None),
+                    )
+                )
             run = self._update_run(run, stage="generate")
             generator = AgentGenerator(GeneratorPaths.for_workspace(self._workspace_root))
             generated = generator.generate(
@@ -485,6 +499,20 @@ class AgentCreationService:
         if run_tests:
             self._run_generated_tests(directory)
         return directory
+
+    @staticmethod
+    def _job_failure_message(
+        operation: str,
+        *,
+        job_id: str,
+        status: dict[str, Any],
+        report_path: Path | None,
+    ) -> str:
+        """将 Worker 的持久化失败状态投影为可直接定位报告的 CLI 错误。"""
+
+        error_code = status.get("error_code") or "UNKNOWN"
+        report_reference = report_path or status.get("report_ref") or "未生成报告"
+        return f"{operation}失败（Job {job_id}，错误码：{error_code}；报告：{report_reference}）"
 
     def _write_plan(self, plan: AgentCreationPlanV1) -> None:
         root = self._workspace_root / "config" / "generated" / "agent-creation-plans" / plan.project_slug

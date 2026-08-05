@@ -255,7 +255,7 @@ def test_create_stops_when_evaluation_job_failed(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(creation_service_module, "KnowledgeWorker", _Worker)
     monkeypatch.setattr(creation_service_module, "AgentGenerator", _Generator)
 
-    with pytest.raises(RuntimeError, match="检索评测未通过"):
+    with pytest.raises(RuntimeError, match="检索评测失败（Job evaluation-job，错误码：UNKNOWN"):
         service.create(project, plan_checksum=plan.plan_checksum, approved_by="reviewer", runner=object(), run_tests=False)
     assert not (tmp_path / "agents" / "agent-hotel-employee").exists()
     assert not (tmp_path / "config" / "knowledge-sources" / "hotel-employee.yaml").exists()
