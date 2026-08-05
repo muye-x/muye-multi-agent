@@ -76,6 +76,7 @@ def test_prepare_from_one_markdown_creates_reviewable_plan(tmp_path: Path) -> No
     assert plan.project_slug == "hotel-employee"
     assert plan.summary["chunk_count"] >= 1
     assert plan.source_config["embedding_batch_size"] == 16
+    assert plan.knowledge_input["allowed_return_fields"][-1] == "knowledge_version_id"
     assert plan.evaluation_set["cases"][0]["required_citation_ids"]
     evidence = plan.summary["evaluation_evidence"]
     assert evidence[0]["source_locators"]
@@ -284,6 +285,7 @@ def test_create_reuses_existing_agent_from_the_same_plan(tmp_path: Path, monkeyp
             return SimpleNamespace(
                 profile_input=SimpleNamespace(model_dump=lambda **_: plan.profile_input),
                 knowledge=SimpleNamespace(model_dump=lambda **_: plan.knowledge_input),
+                evaluation_set=SimpleNamespace(model_dump=lambda **_: plan.evaluation_set),
             )
         return original_load_json_model(path, model_type)
 

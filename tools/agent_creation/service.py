@@ -229,7 +229,11 @@ class AgentCreationService:
                 raise RuntimeError("检索评测未通过；active Snapshot 未发布")
             run = self._update_run(run, stage="generate")
             generator = AgentGenerator(GeneratorPaths.for_workspace(self._workspace_root))
-            generated = generator.generate(slug=project.slug, knowledge_slug=project.slug)
+            generated = generator.generate(
+                slug=project.slug,
+                knowledge_slug=project.slug,
+                evaluation_set=EvaluationSetV1.model_validate(plan.evaluation_set),
+            )
             report = generator.validate(slug=project.slug)
             if not report.is_valid:
                 raise RuntimeError("生成 Agent 的 provenance 校验失败")
@@ -391,7 +395,7 @@ class AgentCreationService:
             scope_filter_ref=f"scope/{project.slug}@1",
             fixed_scope_filter={"op": "eq", "field": "knowledge_version_id", "value": manifest.knowledge_version_id},
             allowed_filter_fields=["knowledge_version_id"],
-            allowed_return_fields=["title", "source", "citation_id", "source_locator"],
+            allowed_return_fields=["title", "source", "citation_id", "source_locator", "knowledge_version_id"],
             tool_budget=4,
             token_budget=8192,
             timeout_budget_seconds=30,
@@ -457,9 +461,13 @@ class AgentCreationService:
         if not report.is_valid:
             raise RuntimeError("已有 Agent 的 provenance 校验失败")
         recipe = load_json_model(directory / ".muye-generation-input.json", GenerationRecipeV1)
+        recipe_evaluation = (
+            recipe.evaluation_set.model_dump(mode="json") if recipe.evaluation_set is not None else None
+        )
         if (
             recipe.profile_input.model_dump(mode="json") != plan.profile_input
             or recipe.knowledge.model_dump(mode="json") != plan.knowledge_input
+            or recipe_evaluation != plan.evaluation_set
         ):
             raise FileExistsError("目标 Agent 目录属于不同的创建计划，拒绝覆盖")
         if run_tests:

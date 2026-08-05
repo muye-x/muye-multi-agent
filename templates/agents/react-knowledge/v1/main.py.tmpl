@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from secrets import compare_digest
 
+from dotenv import load_dotenv
 from fastapi import Request
 from muye_multi_agent_sdk import create_app
 
 from agent import {{ class_name }}
+
+
+# 仅加载 Agent 自己的本地配置；已导出的部署环境变量始终优先。
+load_dotenv(Path(__file__).with_name(".env"), override=False)
 
 
 def _load_internal_tokens() -> tuple[str, str, str]:

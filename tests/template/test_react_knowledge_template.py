@@ -37,6 +37,15 @@ def test_react_knowledge_template_declares_a_pinned_sdk_and_digest_only_base_ima
     dockerignore = (TEMPLATE_DIRECTORY / ".dockerignore").read_text(encoding="utf-8")
     for ignored_pattern in (".env*", ".git/", "*.pem", "*.key", "__pycache__/"):
         assert ignored_pattern in dockerignore
+    environment = (TEMPLATE_DIRECTORY / ".env.example").read_text(encoding="utf-8")
+    for name in (
+        "MUYE_LLM_BASE_URL",
+        "MUYE_SDK_DATA_BASE_URL",
+        "MUYE_AGENT_MAIN_TOKEN",
+        "MUYE_AGENT_CONTROL_TOKEN",
+        "MUYE_AGENT_DATA_TOKEN",
+    ):
+        assert f"{name}=" in environment
 
 
 def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime_identity() -> None:
@@ -61,7 +70,8 @@ def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime
     assert "token_budget" in source
     assert "tool_budget" in source
     assert (TEMPLATE_DIRECTORY / "README.md.tmpl").is_file()
-    assert (TEMPLATE_DIRECTORY / "tests" / "test_contract.py.tmpl").is_file()
+    for test_name in ("test_contract.py.tmpl", "test_retrieval.py.tmpl", "test_e2e.py.tmpl"):
+        assert (TEMPLATE_DIRECTORY / "tests" / test_name).is_file()
 
 
 def test_fixture_agent_has_no_scaffold_import_and_keeps_a_fixed_scope() -> None:
@@ -88,6 +98,7 @@ def test_internal_entrypoint_separates_main_and_control_credentials() -> None:
     assert "MUYE_AGENT_CONTROL_TOKEN" in source
     assert 'request.url.path == "/capabilities"' in source
     assert "MUYE_AGENT_INTERNAL_TOKEN" not in source
+    assert 'load_dotenv(Path(__file__).with_name(".env"), override=False)' in source
 
 
 def test_control_and_data_credentials_cannot_invoke_sub_agent(monkeypatch) -> None:

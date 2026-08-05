@@ -79,3 +79,8 @@ docker-compose.override.yml
 /config/generated/knowledge-reports/
 # Control 的 active Catalog、grant、ACK 与健康状态是运行时投影，不提交 Git。
 /config/runtime/
+
+/agent-projects/
+/config/generated/agent-creation-candidates/
+/config/generated/agent-creation-plans/
+/config/generated/agent-creation-runs/

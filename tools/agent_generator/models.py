@@ -23,6 +23,7 @@ from contracts.models import (
     TIMESTAMP_PATTERN,
     AgentGenerationSpecV1,
     ContractModel,
+    EvaluationSetV1,
 )
 
 from .checksums import canonical_checksum
@@ -249,6 +250,7 @@ class GenerationRecipeV1(ContractModel):
     generation_spec: AgentGenerationSpecV1
     knowledge: KnowledgeGenerationInputV1
     profile_input: AgentProfileInputV1
+    evaluation_set: EvaluationSetV1 | None = None
 
     @model_validator(mode="after")
     def validate_recipe_consistency(self) -> "GenerationRecipeV1":

@@ -17,7 +17,7 @@ import shutil
 import sys
 import tempfile
 
-from contracts.models import AgentDescriptorV1, AgentGenerationSpecV1, SourceProvenanceV1
+from contracts.models import AgentDescriptorV1, AgentGenerationSpecV1, EvaluationSetV1, SourceProvenanceV1
 
 from .approvals import assert_approval
 from .checksums import PROVENANCE_FILE_NAME, canonical_checksum, read_source_tree, source_tree_checksum
@@ -35,6 +35,7 @@ RECIPE_FILE_NAME = ".muye-generation-input.json"
 _TEMPLATE_MANIFEST_FILE = "template-manifest.yaml"
 _PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
 _RENDERED_FILES: dict[str, str] = {
+    ".env.example": ".env.example",
     ".dockerignore": ".dockerignore",
     "Dockerfile": "Dockerfile",
     "README.md.tmpl": "README.md",
@@ -44,6 +45,8 @@ _RENDERED_FILES: dict[str, str] = {
     "prompts/system.md.tmpl": "prompts/system.md",
     "requirements.txt.tmpl": "requirements.txt",
     "tests/test_contract.py.tmpl": "tests/test_contract.py",
+    "tests/test_retrieval.py.tmpl": "tests/test_retrieval.py",
+    "tests/test_e2e.py.tmpl": "tests/test_e2e.py",
 }
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
@@ -116,7 +119,13 @@ class AgentGenerator:
         self._paths = paths
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
-    def generate(self, *, slug: str, knowledge_slug: str) -> GenerationResult:
+    def generate(
+        self,
+        *,
+        slug: str,
+        knowledge_slug: str,
+        evaluation_set: EvaluationSetV1 | None = None,
+    ) -> GenerationResult:
         """生成一个此前不存在的 `agents/agent-<slug>` 目录。
 
         输入配置和模板在创建 staging 目录前全部校验；任何失败都会清理本次 staging
@@ -126,6 +135,8 @@ class AgentGenerator:
             slug=slug,
             knowledge_slug=knowledge_slug,
         )
+        if evaluation_set is not None:
+            recipe = recipe.model_copy(update={"evaluation_set": evaluation_set})
         target = self._target_directory(slug)
         self._assert_target_available(target)
         self._ensure_agents_root()
@@ -363,6 +374,9 @@ class AgentGenerator:
             "description": _json_literal(profile.description),
             "display_name": _json_literal(profile.display_name),
             "display_name_markdown": profile.display_name,
+            "evaluation_set_python": _python_literal(
+                recipe.evaluation_set.model_dump(mode="json") if recipe.evaluation_set is not None else None
+            ),
             "fixed_scope_filter_json": _json_literal(scope.model_dump(mode="json")),
             "instructions": profile.instructions,
             "model_alias": _json_literal(spec.model_alias),
@@ -690,6 +704,11 @@ def _stable_json(value: object) -> str:
 def _json_literal(value: object) -> str:
     """生成可直接嵌入 YAML 或 Python 的单行 JSON 字面量。"""
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ": "))
+
+
+def _python_literal(value: object) -> str:
+    """生成仅由受控契约值组成的 Python 字面量，供生成测试固化评测基线。"""
+    return repr(value)
 
 
 def _unified_tree_diff(actual_tree: dict[str, str], expected_tree: dict[str, str]) -> str:

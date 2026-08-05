@@ -13,6 +13,7 @@ import sys
 import pytest
 import yaml
 
+from contracts.models import EvaluationSetV1
 from tools.agent_generator import AgentGenerator, GeneratorPaths
 from tools.agent_generator.approvals import write_approval
 from tools.agent_generator.checksums import canonical_checksum, read_source_tree
@@ -90,6 +91,45 @@ def test_generate_is_deterministic_and_matches_the_golden_source_checksum(tmp_pa
         TEMPLATE_DIRECTORY / ".dockerignore"
     ).read_text(encoding="utf-8")
     assert "scaffold" not in (first.directory / "agent.py").read_text(encoding="utf-8").lower()
+
+
+def test_generate_embeds_creation_evaluation_baseline_in_post_generation_tests(tmp_path: Path) -> None:
+    """两步创建传入的评测集必须进入 replay recipe 与真实测试模板。"""
+
+    evaluation_set = EvaluationSetV1.model_validate(
+        {
+            "schema_version": "muye.ai/evaluation-set/v1",
+            "evaluation_set_id": "product_handbook_eval",
+            "revision": "evaluation/product-handbook@1",
+            "checksum": "c" * 64,
+            "recall_at_k": 5,
+            "min_recall": 0.8,
+            "min_mrr": 0.6,
+            "min_citation_coverage": 1.0,
+            "cases": [
+                {
+                    "case_id": "product_policy",
+                    "query": "如何配置产品？",
+                    "relevant_chunk_ids": ["chunk_product_policy"],
+                    "required_citation_ids": ["citation_product_policy"],
+                }
+            ],
+        }
+    )
+
+    result = _generator(tmp_path).generate(
+        slug="product-handbook",
+        knowledge_slug="product-handbook",
+        evaluation_set=evaluation_set,
+    )
+
+    recipe = json.loads((result.directory / ".muye-generation-input.json").read_text(encoding="utf-8"))
+    retrieval_test = (result.directory / "tests" / "test_retrieval.py").read_text(encoding="utf-8")
+    e2e_test = (result.directory / "tests" / "test_e2e.py").read_text(encoding="utf-8")
+    assert recipe["evaluation_set"] == evaluation_set.model_dump(mode="json")
+    assert "chunk_product_policy" in retrieval_test
+    assert "citation_product_policy" in e2e_test
+    assert 'RESOURCE_ID = "kb.product_handbook"' in retrieval_test
 
 
 def test_generated_agent_compiles_imports_and_runs_its_template_contract(tmp_path: Path) -> None:

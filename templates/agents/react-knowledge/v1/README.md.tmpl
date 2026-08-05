@@ -12,7 +12,7 @@
 
 ## 本地验证
 
-从 Scaffold 根目录安装依赖后，设置部署层注入的 `MUYE_AGENT_*` 身份变量，并在本目录执行：
+从 Scaffold 根目录安装依赖后，先复制 `cp .env.example .env`，填写本地 LLM/Data 地址、部署身份与三个互不相同的 token。部署环境应由密钥管理系统注入同名变量，覆盖本地 `.env`。随后在本目录执行：
 
 ```bash
 ../../.venv/bin/python -m pytest -q tests
