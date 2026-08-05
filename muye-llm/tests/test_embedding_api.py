@@ -34,7 +34,10 @@ class _FakeEmbeddings:
 
     async def create(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
-        return self.response
+        response = self.response.pop(0) if isinstance(self.response, list) else self.response
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class _FakeEmbeddingClient(_CloseableFake):
@@ -131,6 +134,17 @@ def test_legacy_embed_method_keeps_list_return_type() -> None:
     embeddings = asyncio.run(client.embed(["text"]))
 
     assert embeddings == [[0.1, 0.2]]
+
+
+def test_embed_retries_recoverable_upstream_failure() -> None:
+    client, embedding_client = _client([asyncio.TimeoutError(), _response([0.1, 0.2])])
+    client._sleep_before_retry = lambda _attempt: asyncio.sleep(0)
+
+    result = asyncio.run(client.embed_result(["text"], trace_id="trace-1"))
+
+    assert result is not None
+    assert result.embeddings == ((0.1, 0.2),)
+    assert len(embedding_client.embeddings.calls) == 2
 
 
 def test_embed_rejects_unknown_alias_and_dimension_mismatch() -> None:

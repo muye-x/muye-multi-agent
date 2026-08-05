@@ -934,16 +934,22 @@ def test_milvus_publisher_creates_fixed_bm25_schema_and_indexes(tmp_path: Path, 
 
 
 class _EmbeddingResponse:
+    def __init__(self, payload: dict[str, object] | None = None) -> None:
+        self._payload = payload or {
+            "success": True,
+            "data": {"dimensions": 2, "embeddings": [[float("nan"), 0.0]]},
+        }
+
     def raise_for_status(self) -> None:
         return None
 
     def json(self) -> dict[str, object]:
-        return {"success": True, "data": {"dimensions": 2, "embeddings": [[float("nan"), 0.0]]}}
+        return self._payload
 
 
 class _EmbeddingClient:
-    def __init__(self, **_kwargs: object) -> None:
-        return None
+    def __init__(self, *, response: _EmbeddingResponse | None = None, **_kwargs: object) -> None:
+        self._response = response or _EmbeddingResponse()
 
     def __enter__(self) -> "_EmbeddingClient":
         return self
@@ -952,7 +958,7 @@ class _EmbeddingClient:
         return None
 
     def post(self, *_args: object, **_kwargs: object) -> _EmbeddingResponse:
-        return _EmbeddingResponse()
+        return self._response
 
 
 def test_embedder_rejects_non_finite_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -961,4 +967,19 @@ def test_embedder_rejects_non_finite_vectors(monkeypatch: pytest.MonkeyPatch) ->
     embedder = MuyeLLMEmbedder(base_url="http://muye-llm.test")
 
     with pytest.raises(DependencyUnavailableError, match="非有限"):
+        embedder.embed(["测试"], model="embed-v1", dimensions=2, trace_id="job_test")
+
+
+def test_embedder_reports_gateway_embedding_dependency_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """网关的固定 502 失败体必须保留为可操作的知识构建错误。"""
+    response = _EmbeddingResponse(
+        {"success": False, "code": 502, "message": "Embedding 服务调用失败", "data": {}}
+    )
+    monkeypatch.setattr(
+        "tools.knowledge_pipeline.embeddings.httpx.Client",
+        lambda **_kwargs: _EmbeddingClient(response=response),
+    )
+    embedder = MuyeLLMEmbedder(base_url="http://muye-llm.test")
+
+    with pytest.raises(DependencyUnavailableError, match="上游连通性"):
         embedder.embed(["测试"], model="embed-v1", dimensions=2, trace_id="job_test")

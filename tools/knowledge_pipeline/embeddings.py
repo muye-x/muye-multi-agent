@@ -46,6 +46,10 @@ class MuyeLLMEmbedder:
         except httpx.HTTPError as exc:
             raise DependencyUnavailableError("muye-llm Embedding 服务不可用") from exc
         if not isinstance(payload, dict) or payload.get("success") is not True:
+            if payload.get("success") is False and payload.get("message") == "Embedding 服务调用失败":
+                raise DependencyUnavailableError(
+                    "muye-llm Embedding 服务调用失败；请检查 muye-llm 的 Embedding 上游连通性和配置"
+                )
             raise DependencyUnavailableError("muye-llm Embedding 响应无效")
         data = payload.get("data")
         if not isinstance(data, dict) or data.get("dimensions") != dimensions:

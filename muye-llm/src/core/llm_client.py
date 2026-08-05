@@ -745,40 +745,60 @@ class MultiLLMClient:
         trace_id: str = "",
         model: str | None = None,
     ) -> EmbeddingResult | None:
-        """使用 alias 调用 Embedding；失败时返回 ``None`` 以保持旧接口语义。"""
+        """使用 alias 调用 Embedding，并仅对可恢复的上游失败有限重试。"""
         selection = self.resolve_embedding_model(model)
-        try:
-            response = await asyncio.wait_for(
-                self._embedding_client.embeddings.create(
-                    model=selection.provider_model,
-                    input=texts,
-                ),
-                timeout=settings.llm_timeout,
-            )
-            result = self._parse_embeddings(
-                response,
-                input_count=len(texts),
-                selection=selection,
-            )
-            logger.info(
-                "[LLM.embed] success trace_id=%s model=%s count=%s dimensions=%s",
-                trace_id,
-                selection.id,
-                len(result.embeddings),
-                result.dimensions,
-            )
-            return result
-        except asyncio.CancelledError:
-            logger.info("[LLM.embed] cancelled trace_id=%s model=%s", trace_id, selection.id)
-            raise
-        except Exception as exc:
-            logger.error(
-                "[LLM.embed] failure trace_id=%s model=%s error=%s",
-                trace_id,
-                selection.id,
-                type(exc).__name__,
-            )
-            return None
+        last_exc: Exception | None = None
+        for attempt in range(settings.llm_max_retries):
+            try:
+                response = await asyncio.wait_for(
+                    self._embedding_client.embeddings.create(
+                        model=selection.provider_model,
+                        input=texts,
+                    ),
+                    timeout=settings.llm_timeout,
+                )
+                result = self._parse_embeddings(
+                    response,
+                    input_count=len(texts),
+                    selection=selection,
+                )
+                logger.info(
+                    "[LLM.embed] success trace_id=%s model=%s count=%s dimensions=%s",
+                    trace_id,
+                    selection.id,
+                    len(result.embeddings),
+                    result.dimensions,
+                )
+                return result
+            except asyncio.CancelledError:
+                logger.info("[LLM.embed] cancelled trace_id=%s model=%s", trace_id, selection.id)
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if not self._is_retryable_error(exc):
+                    logger.error(
+                        "[LLM.embed] non-retryable failure trace_id=%s model=%s error=%s",
+                        trace_id,
+                        selection.id,
+                        type(exc).__name__,
+                    )
+                    break
+                logger.warning(
+                    "[LLM.embed] retryable failure trace_id=%s model=%s error=%s",
+                    trace_id,
+                    selection.id,
+                    type(exc).__name__,
+                )
+                if attempt < settings.llm_max_retries - 1:
+                    await self._sleep_before_retry(attempt)
+
+        logger.error(
+            "[LLM.embed] all attempts failed trace_id=%s model=%s error=%s",
+            trace_id,
+            selection.id,
+            type(last_exc).__name__ if last_exc else "unknown",
+        )
+        return None
 
     async def embed(
         self,
