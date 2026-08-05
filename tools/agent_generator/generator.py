@@ -44,6 +44,7 @@ _RENDERED_FILES: dict[str, str] = {
     "main.py.tmpl": "main.py",
     "prompts/system.md.tmpl": "prompts/system.md",
     "requirements.txt.tmpl": "requirements.txt",
+    "run-local.sh.tmpl": "run-local.sh",
     "tests/test_contract.py.tmpl": "tests/test_contract.py",
     "tests/test_retrieval.py.tmpl": "tests/test_retrieval.py",
     "tests/test_e2e.py.tmpl": "tests/test_e2e.py",
@@ -388,6 +389,7 @@ class AgentGenerator:
             "slug": _json_literal(spec.slug),
             "slug_markdown": spec.slug,
             "supported_intents_json": _json_literal(profile.supported_intents),
+            "template_version": manifest.template_version,
             "timeout_budget_seconds": str(spec.timeout_budget_seconds),
             "tool_name": tool_name,
             "tool_name_retrieve_json": _json_literal(f"{tool_name}_retrieve"),
@@ -403,6 +405,8 @@ class AgentGenerator:
             assert_path_within(output_path, staging, description="模板输出文件")
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(content, encoding="utf-8")
+            if relative_path.endswith(".sh"):
+                output_path.chmod(0o755)
 
     def _build_provenance(
         self,

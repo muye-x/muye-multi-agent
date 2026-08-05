@@ -21,7 +21,7 @@ def test_react_knowledge_template_declares_a_pinned_sdk_and_digest_only_base_ima
 
     assert manifest == {
         "template_id": "react-knowledge",
-        "template_version": "1.0.0",
+        "template_version": "1.0.1",
         "sdk_version": "2.0.0",
         "sdk_version_specifier": "==2.0.0",
         "base_image_build_arg": "MUYE_AGENT_BASE_IMAGE",
@@ -70,6 +70,17 @@ def test_react_knowledge_template_uses_only_scoped_retrieval_and_trusted_runtime
     assert "token_budget" in source
     assert "tool_budget" in source
     assert (TEMPLATE_DIRECTORY / "README.md.tmpl").is_file()
+    launcher = TEMPLATE_DIRECTORY / "run-local.sh.tmpl"
+    assert launcher.is_file()
+    launcher_source = launcher.read_text(encoding="utf-8")
+    for value in (
+        "muye-llm",
+        "muye-data",
+        "uvicorn main:app",
+        "Authorization: Bearer $(sed",
+        "/invoke",
+    ):
+        assert value in launcher_source
     for test_name in ("test_contract.py.tmpl", "test_retrieval.py.tmpl", "test_e2e.py.tmpl"):
         assert (TEMPLATE_DIRECTORY / "tests" / test_name).is_file()
 

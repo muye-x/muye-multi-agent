@@ -87,6 +87,11 @@ def test_generate_is_deterministic_and_matches_the_golden_source_checksum(tmp_pa
     assert descriptor.resources[0].resource_id == "kb.product_handbook"
     assert descriptor.source.provenance_file == ".muye-generation.json"
     assert ".dockerignore" in first.provenance.generated_files
+    assert "run-local.sh" in first.provenance.generated_files
+    launcher_path = first.directory / "run-local.sh"
+    assert launcher_path.stat().st_mode & 0o111
+    syntax_check = subprocess.run(["bash", "-n", str(launcher_path)], check=False, capture_output=True, text=True)
+    assert syntax_check.returncode == 0, syntax_check.stderr
     assert (first.directory / ".dockerignore").read_text(encoding="utf-8") == (
         TEMPLATE_DIRECTORY / ".dockerignore"
     ).read_text(encoding="utf-8")

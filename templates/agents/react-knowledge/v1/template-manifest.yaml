@@ -1,5 +1,5 @@
 template_id: react-knowledge
-template_version: 1.0.0
+template_version: 1.0.1
 sdk_version: 2.0.0
 sdk_version_specifier: ==2.0.0
 base_image_build_arg: MUYE_AGENT_BASE_IMAGE

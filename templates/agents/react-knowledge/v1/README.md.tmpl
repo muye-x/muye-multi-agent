@@ -17,3 +17,7 @@
 ```bash
 ../../.venv/bin/python -m pytest -q tests
 ```
+
+## 本地服务与测试
+
+在 Scaffold 内开发时执行 `./run-local.sh`。它会复用或启动本地 `muye-llm`、`muye-data` 和当前 Agent，首次运行时仅为本地 `.env` 生成互不相同的内部 token，并在控制台输出 `/health` 与带鉴权的 `/invoke` 测试命令。该脚本不会启动 Milvus；请先确保 `muye-data` 的 Milvus 连接和 active Resource Snapshot 可用。

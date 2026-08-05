@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+agent_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+workspace_root="$(cd -- "${agent_directory}/../.." && pwd)"
+python_executable="${workspace_root}/.venv/bin/python"
+agent_log_path="${agent_directory}/run-local-agent.log"
+llm_log_path="${agent_directory}/run-local-muye-llm.log"
+data_log_path="${agent_directory}/run-local-muye-data.log"
+
+if [[ ! -x "${python_executable}" ]]; then
+  printf 'error: Scaffold Python environment is unavailable: %s\n' "${python_executable}" >&2
+  exit 2
+fi
+if ! command -v curl >/dev/null; then
+  printf 'error: curl is required for local service health checks\n' >&2
+  exit 2
+fi
+
+cd "${workspace_root}"
+
+wait_for_http() {
+  local url="$1"
+  local service_name="$2"
+  local attempts=30
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if curl --noproxy '*' --fail --silent --max-time 2 "${url}" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  printf 'error: %s did not become ready: %s\n' "${service_name}" "${url}" >&2
+  return 1
+}
+
+environment_file="${agent_directory}/.env"
+if [[ ! -f "${environment_file}" ]]; then
+  cp "${agent_directory}/.env.example" "${environment_file}"
+fi
+chmod 600 "${environment_file}"
+
+read -r agent_port agent_slug <<< "$("${python_executable}" -c '
+import sys
+from pathlib import Path
+import yaml
+
+descriptor = yaml.safe_load((Path(sys.argv[1]) / "agent.yaml").read_text(encoding="utf-8"))
+print(descriptor["runtime"]["internal_port"], descriptor["slug"])
+' "${agent_directory}")"
+
+${python_executable} -c '
+import secrets
+import sys
+from pathlib import Path
+
+import yaml
+
+from tools.agent_generator.checksums import canonical_checksum, source_tree_checksum
+
+agent_directory = Path(sys.argv[1])
+environment_path = agent_directory / ".env"
+descriptor = yaml.safe_load((agent_directory / "agent.yaml").read_text(encoding="utf-8"))
+values: dict[str, str] = {}
+for line in environment_path.read_text(encoding="utf-8").splitlines():
+    if "=" in line and not line.lstrip().startswith("#"):
+        key, value = line.split("=", 1)
+        values[key] = value
+
+slug = descriptor["slug"]
+updates = {
+    "MUYE_AGENT_SERVICE_ID": values.get("MUYE_AGENT_SERVICE_ID") or f"local-{slug}",
+    "MUYE_AGENT_DEPLOYMENT_ID": values.get("MUYE_AGENT_DEPLOYMENT_ID") or f"local-{slug}",
+    "MUYE_AGENT_DESCRIPTOR_CHECKSUM": canonical_checksum(descriptor),
+    "MUYE_AGENT_SOURCE_TREE_CHECKSUM": source_tree_checksum(agent_directory),
+}
+token_names = ("MUYE_AGENT_MAIN_TOKEN", "MUYE_AGENT_CONTROL_TOKEN", "MUYE_AGENT_DATA_TOKEN")
+tokens = [values.get(name, "") for name in token_names]
+if not all(tokens):
+    tokens = [secrets.token_urlsafe(32) for _ in token_names]
+elif len(set(tokens)) != len(tokens):
+    raise SystemExit("error: existing local Agent tokens must be non-empty and mutually distinct")
+updates.update(dict(zip(token_names, tokens, strict=True)))
+
+written: set[str] = set()
+lines: list[str] = []
+for line in environment_path.read_text(encoding="utf-8").splitlines():
+    key = line.split("=", 1)[0] if "=" in line and not line.lstrip().startswith("#") else ""
+    if key in updates:
+        lines.append(f"{key}={updates[key]}")
+        written.add(key)
+    else:
+        lines.append(line)
+for key, value in updates.items():
+    if key not in written:
+        lines.append(f"{key}={value}")
+environment_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+' "${agent_directory}"
+
+llm_port="$(${python_executable} -c '
+import os
+from pathlib import Path
+from dotenv import dotenv_values
+
+values = dotenv_values(Path("muye-llm/.env"))
+print(os.environ.get("MUYE_LLM_PORT") or values.get("MUYE_LLM_PORT") or "9850")
+')"
+llm_health_url="http://127.0.0.1:${llm_port}/health"
+if ! curl --noproxy '*' --fail --silent --max-time 2 "${llm_health_url}" >/dev/null; then
+  printf 'starting muye-llm; log: %s\n' "${llm_log_path}"
+  (
+    cd "${workspace_root}/muye-llm"
+    exec "${python_executable}" main.py
+  ) >"${llm_log_path}" 2>&1 &
+  if ! wait_for_http "${llm_health_url}" "muye-llm"; then
+    tail -n 80 "${llm_log_path}" >&2 || true
+    exit 1
+  fi
+fi
+
+data_health_url="http://127.0.0.1:9840/health"
+if ! curl --noproxy '*' --fail --silent --max-time 2 "${data_health_url}" >/dev/null; then
+  snapshot_path="${workspace_root}/config/generated/resource-snapshot.json"
+  if [[ ! -f "${snapshot_path}" ]]; then
+    printf 'error: active Resource Snapshot is unavailable: %s\n' "${snapshot_path}" >&2
+    exit 1
+  fi
+  printf 'starting muye-data; log: %s\n' "${data_log_path}"
+  (
+    cd "${workspace_root}/muye-data"
+    MUYE_DATA_RESOURCE_SNAPSHOT_PATH="${snapshot_path}" exec "${python_executable}" main.py
+  ) >"${data_log_path}" 2>&1 &
+  if ! wait_for_http "${data_health_url}" "muye-data"; then
+    tail -n 80 "${data_log_path}" >&2 || true
+    exit 1
+  fi
+fi
+
+agent_health_url="http://127.0.0.1:${agent_port}/health"
+if ! curl --noproxy '*' --fail --silent --max-time 2 "${agent_health_url}" >/dev/null; then
+  printf 'starting agent %s; log: %s\n' "${agent_slug}" "${agent_log_path}"
+  (
+    cd "${agent_directory}"
+    exec "${python_executable}" -m uvicorn main:app --host 127.0.0.1 --port "${agent_port}"
+  ) >"${agent_log_path}" 2>&1 &
+  if ! wait_for_http "${agent_health_url}" "agent ${agent_slug}"; then
+    tail -n 80 "${agent_log_path}" >&2 || true
+    exit 1
+  fi
+fi
+
+printf '\nAgent is ready: %s\n' "${agent_health_url}"
+printf 'Health check:\n'
+printf '  curl --noproxy "*" http://127.0.0.1:%s/health\n' "${agent_port}"
+printf 'Invoke test:\n'
+printf '  curl --noproxy "*" -X POST http://127.0.0.1:%s/invoke -H "Authorization: Bearer $(sed -n '\''s/^MUYE_AGENT_MAIN_TOKEN=//p'\'' .env)" -H "Content-Type: application/json" -d '\''{"task":"请根据资料回答一个问题。","context":{"user_id":"local_user","session_id":"local_session"}}'\''\n' "${agent_port}"
