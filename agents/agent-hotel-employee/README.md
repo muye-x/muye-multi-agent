@@ -1,0 +1,19 @@
+# 酒店员工手册助手
+
+这是由 `react-knowledge` 模板生成的内部只读知识 Agent，绑定逻辑资源 `hotel-employee` 对应的已确认知识配置。
+
+## 开发者接管
+
+- `agent.yaml` 是身份、能力、逻辑资源和运行预算的唯一配置事实源；修改后请重新执行 `../../scripts/muye.sh agent validate hotel-employee`。`agent_id`、slug、tool name 和首次模板来源不可修改，其他 descriptor 字段由开发者与 Git 接管。
+- `.muye-generation.json` 记录初始模板和输入 checksum；`.muye-generation-input.json` 是不含密钥的重放输入，仅供只读 `diff` 使用。
+- `.dockerignore` 已排除 `.env*`、Git 元数据、缓存、本地数据库和私钥/证书；构建镜像前不要删除这些规则。`token_budget`、`timeout_seconds` 和 `tool_budget` 分别限制模型输出、请求 deadline 和单次请求的检索工具执行次数。
+- 生成器不会覆盖本目录。模板升级请先执行 `../../scripts/muye.sh agent diff hotel-employee --template latest`，审阅差异后手工合并或生成新 slug。
+- 禁止在 Agent 中直接访问 Milvus、PostgreSQL、对象存储、Docker Socket 或未声明的网络服务；知识查询只能使用已生成的 scoped retrieval tool。
+
+## 本地验证
+
+从 Scaffold 根目录安装依赖后，先复制 `cp .env.example .env`，填写本地 LLM/Data 地址、部署身份与三个互不相同的 token。部署环境应由密钥管理系统注入同名变量，覆盖本地 `.env`。随后在本目录执行：
+
+```bash
+../../.venv/bin/python -m pytest -q tests
+```

@@ -1,0 +1,26 @@
+allowed_filter_fields:
+- knowledge_version_id
+allowed_return_fields:
+- title
+- source
+- citation_id
+- source_locator
+- knowledge_version_id
+evaluation_set_ref: knowledge-evaluations/hotel-employee.yaml
+fixed_scope_filter:
+  field: knowledge_version_id
+  op: eq
+  value: kv_c6d8292a24bec8ba
+knowledge_slug: hotel-employee
+model_alias: deepseek-v4-flash
+resource_checksum: 74a0bff49a89758298a46e9b57b087cb57ccfc663518a18c2c94acf6f6278739
+resource_id: kb.hotel_employee
+resource_revision: resource/kv_c6d8292a24bec8ba
+retrieval_pipeline: hybrid
+schema_version: muye.ai/knowledge-generation-input/v1
+scope_filter_ref: scope/hotel-employee@1
+skill_checksum: 36f772d591866e144c0ea7f91b2a86acb74aeb0b7a95d860ec09ce8d46a5d9b5
+skill_revision: retrieval/hotel-employee@1
+timeout_budget_seconds: 30
+token_budget: 8192
+tool_budget: 4

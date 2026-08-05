@@ -1,0 +1,36 @@
+chunking:
+  max_characters: 1200
+  min_characters: 80
+  overlap_characters: 120
+connection: milvus_default
+default_pipeline: hybrid
+display_name: 酒店员工手册助手
+embedding_alias: text-embedding-v3
+embedding_batch_size: 8
+embedding_dimensions: 1024
+embedding_revision: r1
+evaluation_set_ref: knowledge-evaluations/hotel-employee.yaml
+keyword_analyzer: jieba
+knowledge_id: kb.hotel_employee
+max_chunks: 10000
+max_docx_archive_entries: 10000
+max_docx_uncompressed_bytes: 104857600
+max_file_bytes: 26214400
+max_parsed_blocks: 100000
+max_pdf_pages: 1000
+max_source_files: 1000
+max_total_chunk_characters: 20000000
+max_total_source_bytes: 104857600
+parser_profile: docling-default-v1
+rerank_alias: null
+rerank_required: false
+resource_id: kb.hotel_employee
+schema_version: muye.ai/knowledge-source-config/v1
+slug: hotel-employee
+sources:
+- include:
+  - '**/*.pdf'
+  - '**/*.docx'
+  - '**/*.md'
+  - '**/*.txt'
+  path: sources

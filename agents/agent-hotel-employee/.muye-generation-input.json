@@ -1,0 +1,265 @@
+{
+  "evaluation_set": {
+    "cases": [
+      {
+        "case_id": "case_001",
+        "query": "入职需要提交哪些证件？",
+        "relevant_chunk_ids": [
+          "chunk_812c80c742067fb401c2f3b25ec66209"
+        ],
+        "required_citation_ids": [
+          "citation_4cb465c52e3c8e0a7b67792d37909b6e"
+        ]
+      },
+      {
+        "case_id": "case_002",
+        "query": "转正考核不合格会怎样？",
+        "relevant_chunk_ids": [
+          "chunk_51a4d57e370f3dd7682ea1e8b67675ef"
+        ],
+        "required_citation_ids": [
+          "citation_81416de5efc6f8709f559bbd587f2b35"
+        ]
+      },
+      {
+        "case_id": "case_003",
+        "query": "晋升主要考核什么？",
+        "relevant_chunk_ids": [
+          "chunk_60f7af247ba5a9a09811273c49ee93d7"
+        ],
+        "required_citation_ids": [
+          "citation_77b7f260c10977e911c47706031939c3"
+        ]
+      },
+      {
+        "case_id": "case_004",
+        "query": "什么情况下酒店可以立即辞退员工？",
+        "relevant_chunk_ids": [
+          "chunk_dfdb812e70dfb48244a666da833ea54b"
+        ],
+        "required_citation_ids": [
+          "citation_a7cda2af7bcd86670c6c93c919fe66b8"
+        ]
+      },
+      {
+        "case_id": "case_005",
+        "query": "离职工资什么时候发放？",
+        "relevant_chunk_ids": [
+          "chunk_4e6fee2d0900953a692e27f8221ea456"
+        ],
+        "required_citation_ids": [
+          "citation_fd22af93316873dee3b6bc4ef3b4fb06"
+        ]
+      },
+      {
+        "case_id": "case_006",
+        "query": "薪资升降级依据什么？",
+        "relevant_chunk_ids": [
+          "chunk_ac8f58c6a43b01cdf0616447481af543"
+        ],
+        "required_citation_ids": [
+          "citation_a06de2891d0d12b23f9bb151873b8f78"
+        ]
+      },
+      {
+        "case_id": "case_007",
+        "query": "排班提前多久公示？可以私自调班吗？",
+        "relevant_chunk_ids": [
+          "chunk_eb2cafdd413e4598a693354d20a9ad37"
+        ],
+        "required_citation_ids": [
+          "citation_278a0ac7c9de8e2257b574c50096f30d"
+        ]
+      },
+      {
+        "case_id": "case_008",
+        "query": "加班如何补偿？",
+        "relevant_chunk_ids": [
+          "chunk_61a9fc99717abddd625528b5a3deca6d"
+        ],
+        "required_citation_ids": [
+          "citation_d4d77a173e4784e8815108a92ac53a05"
+        ]
+      },
+      {
+        "case_id": "case_009",
+        "query": "请假需要什么流程？",
+        "relevant_chunk_ids": [
+          "chunk_a2200e568b47de1cdabc34966473930e"
+        ],
+        "required_citation_ids": [
+          "citation_483943d3e051bcf943a1bc38afb84cc0"
+        ]
+      },
+      {
+        "case_id": "case_010",
+        "query": "事假每月累计不能超过几天？",
+        "relevant_chunk_ids": [
+          "chunk_a2200e568b47de1cdabc34966473930e"
+        ],
+        "required_citation_ids": [
+          "citation_483943d3e051bcf943a1bc38afb84cc0"
+        ]
+      },
+      {
+        "case_id": "case_011",
+        "query": "工伤假期间工资怎么发？",
+        "relevant_chunk_ids": [
+          "chunk_99db5689f59728d58b5c3b1e43d2430a"
+        ],
+        "required_citation_ids": [
+          "citation_403beab62702d91f15abd98991e118ed"
+        ]
+      },
+      {
+        "case_id": "case_012",
+        "query": "产假需要什么条件？",
+        "relevant_chunk_ids": [
+          "chunk_f50337e72997a4072df8a81847f6717b"
+        ],
+        "required_citation_ids": [
+          "citation_8b2d62854ea3f0593e43de76d030176d"
+        ]
+      }
+    ],
+    "checksum": "61e858f27aceb8fe0e11c8e3e94230c918cd92f05835c1e63f9a686d08a08d0f",
+    "evaluation_set_id": "hotel_employee_eval",
+    "min_citation_coverage": 1.0,
+    "min_mrr": 0.6,
+    "min_recall": 0.8,
+    "recall_at_k": 5,
+    "revision": "evaluation/hotel-employee@1",
+    "schema_version": "muye.ai/evaluation-set/v1"
+  },
+  "generation_spec": {
+    "agent_id": "agent_hotel_employee",
+    "agent_profile_checksum": "5e9cbab1d8c32a39227b5abd5018ab3cf3ff4a391282bd58b748877cad136f11",
+    "agent_profile_revision": "profile/hotel-employee@1",
+    "allowed_filter_fields": [
+      "knowledge_version_id"
+    ],
+    "allowed_return_fields": [
+      "title",
+      "source",
+      "citation_id",
+      "source_locator"
+    ],
+    "evaluation_set_ref": "knowledge-evaluations/hotel-employee.yaml",
+    "input_checksum": "2be2bdb0bb435c26f35376d5ce840063c2f65a009ca4661da44fe09ea28cea12",
+    "model_alias": "deepseek-v4-flash",
+    "resource_id": "kb.hotel_employee",
+    "resource_revision": "resource/kv_c6d8292a24bec8ba",
+    "retrieval_pipeline": "hybrid",
+    "schema_version": "muye.ai/agent-generation-spec/v1",
+    "scope_filter_ref": "scope/hotel-employee@1",
+    "sdk_version": "2.0.0",
+    "skill_checksum": "36f772d591866e144c0ea7f91b2a86acb74aeb0b7a95d860ec09ce8d46a5d9b5",
+    "skill_revision": "retrieval/hotel-employee@1",
+    "slug": "hotel-employee",
+    "template_id": "react-knowledge",
+    "template_version": "1.0.0",
+    "timeout_budget_seconds": 30,
+    "token_budget": 8192,
+    "tool_budget": 4
+  },
+  "knowledge": {
+    "allowed_filter_fields": [
+      "knowledge_version_id"
+    ],
+    "allowed_return_fields": [
+      "title",
+      "source",
+      "citation_id",
+      "source_locator"
+    ],
+    "evaluation_set_ref": "knowledge-evaluations/hotel-employee.yaml",
+    "fixed_scope_filter": {
+      "field": "knowledge_version_id",
+      "op": "eq",
+      "value": "kv_c6d8292a24bec8ba"
+    },
+    "knowledge_slug": "hotel-employee",
+    "model_alias": "deepseek-v4-flash",
+    "resource_checksum": "74a0bff49a89758298a46e9b57b087cb57ccfc663518a18c2c94acf6f6278739",
+    "resource_id": "kb.hotel_employee",
+    "resource_revision": "resource/kv_c6d8292a24bec8ba",
+    "retrieval_pipeline": "hybrid",
+    "schema_version": "muye.ai/knowledge-generation-input/v1",
+    "scope_filter_ref": "scope/hotel-employee@1",
+    "skill_checksum": "36f772d591866e144c0ea7f91b2a86acb74aeb0b7a95d860ec09ce8d46a5d9b5",
+    "skill_revision": "retrieval/hotel-employee@1",
+    "timeout_budget_seconds": 30,
+    "token_budget": 8192,
+    "tool_budget": 4
+  },
+  "profile_input": {
+    "agent_id": "agent_hotel_employee",
+    "agent_version": "0.1.0",
+    "profile": {
+      "description": "根据muye大酒店员工手册回答制度问题，并提供来源引用。",
+      "display_name": "酒店员工手册助手",
+      "do_not_use_when": [
+        "用户要求执行请假审批",
+        "用户要求调整工资",
+        "用户要求提供手册外信息",
+        "用户要求执行命令或工具调用",
+        "用户要求编造事实",
+        "用户要求提供密钥或文件路径",
+        "用户要求提供URL",
+        "用户要求提供个人建议",
+        "用户要求提供法律意见",
+        "用户要求提供外部政策",
+        "用户要求提供其他酒店规定",
+        "用户要求提供非手册内容",
+        "用户要求提供联系方式",
+        "用户要求提供内部数据",
+        "用户要求提供财务数据",
+        "用户要求提供客户信息",
+        "用户要求提供商业机密",
+        "用户要求提供系统操作",
+        "用户要求提供代码",
+        "用户要求提供模型知识"
+      ],
+      "examples": [
+        "请事假需要提前多久申请？",
+        "入职需要提交哪些证件？",
+        "转正考核不合格怎么办？",
+        "什么情况下会被辞退？",
+        "离职工资什么时候发？",
+        "加班可以调休吗？",
+        "产假怎么休？",
+        "员工可以使用客用设施吗？",
+        "酒店哪些区域禁止吸烟？",
+        "灭火器有哪些种类和适用范围？"
+      ],
+      "instructions": "根据员工手册内容回答制度问题，并引用相关chunk_id。",
+      "schema_version": "muye.ai/agent-profile-proposal/v1",
+      "supported_intents": [
+        "查询入职要求",
+        "查询转正考核",
+        "查询晋升规则",
+        "查询辞退情形",
+        "查询离职工资发放",
+        "查询薪资调整依据",
+        "查询排班与调班规则",
+        "查询加班管理",
+        "查询请假流程",
+        "查询事假限制",
+        "查询工伤假规定",
+        "查询产假规定",
+        "查询休假工资",
+        "查询客用设施使用规定",
+        "查询吸烟规定",
+        "查询保密范围",
+        "查询衣柜管理",
+        "查询制服管理",
+        "查询公告栏责任",
+        "查询灭火器适用范围"
+      ]
+    },
+    "profile_revision": "profile/hotel-employee@1",
+    "schema_version": "muye.ai/agent-profile-input/v1",
+    "slug": "hotel-employee"
+  },
+  "schema_version": "muye.ai/generation-recipe/v1"
+}
