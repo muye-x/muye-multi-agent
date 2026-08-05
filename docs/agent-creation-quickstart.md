@@ -72,6 +72,8 @@ Markdown 与 TXT 无需 Docling；DOCX/PDF 需要 Docling，扫描 PDF 还需要
 
 该模式会先生成计划，再以本次生成的完整 checksum 执行 `create`；`<principal>` 会写入 creation、schema、resource、skill 和 profile 审批记录。它会跳过人工审阅计划的停顿，但不会跳过资料漂移复核、Milvus 构建、检索评测或生成后契约测试。`--approved-by` 只能与 `--auto-approve` 一起使用。
 
+若 `agents/agent-<slug>/` 已存在但缺少 `agent.yaml`，它不是可复用的生成产物。创建命令会拒绝覆盖，以保护其中可能存在的 `.env`；先将该目录移动到项目外的备份位置，再重新执行创建命令。
+
 ## 确认并创建
 
 确认计划后，使用输出中的完整 checksum 执行：

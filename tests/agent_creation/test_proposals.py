@@ -22,7 +22,19 @@ class _Response:
         return None
 
     def json(self) -> dict[str, object]:
-        return {"data": {"content": json.dumps(self._payload, ensure_ascii=False)}}
+        return {
+            "success": True,
+            "code": 200,
+            "message": "ok",
+            "data": {"content": json.dumps(self._payload, ensure_ascii=False)},
+        }
+
+
+class _FailedResponse(_Response):
+    """模拟 muye-llm 以成功 HTTP 状态返回的结构化业务失败。"""
+
+    def json(self) -> dict[str, object]:
+        return {"success": False, "code": 502, "message": "LLM 返回空内容", "data": {}}
 
 
 class _Client:
@@ -141,3 +153,16 @@ def test_propose_repairs_case_that_spans_multiple_chunks(monkeypatch: pytest.Mon
     assert len(client.requests) == 2
     repair_body = json.loads(client.requests[1]["messages"][1]["content"])
     assert "每个评测用例必须且只能关联一个 relevant_chunk_id" in repair_body["validation_errors"][0]["reason"]
+
+
+def test_propose_reports_muye_llm_business_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """网关以 HTTP 200 返回失败 payload 时，保留其可行动的错误消息。"""
+
+    client = _Client([_FailedResponse({})])
+    monkeypatch.setattr(proposals_module.httpx, "Client", lambda **_: client)
+
+    with pytest.raises(RuntimeError, match="未能生成 Agent 创建提案：LLM 返回空内容"):
+        MuyeLLMProposalClient(base_url="http://muye-llm.test").propose(
+            project=_project(),
+            chunks=[{"chunk_id": "chunk-1", "citation_id": "citation-1", "source": "manual.md", "content": "请假制度"}],
+        )

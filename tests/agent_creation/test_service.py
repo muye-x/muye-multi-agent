@@ -270,6 +270,7 @@ def test_create_reuses_existing_agent_from_the_same_plan(tmp_path: Path, monkeyp
     plan = service.prepare(project)
     directory = tmp_path / "agents" / "agent-hotel-employee"
     directory.mkdir(parents=True)
+    (directory / "agent.yaml").write_text("placeholder: true\n", encoding="utf-8")
 
     class _Generator:
         def __init__(self, _: object) -> None:
@@ -297,6 +298,28 @@ def test_create_reuses_existing_agent_from_the_same_plan(tmp_path: Path, monkeyp
 
     assert result["status"] == "reused"
     assert result["directory"] == str(directory)
+
+
+def test_create_reports_incomplete_existing_agent_without_overwriting_it(tmp_path: Path) -> None:
+    """不完整目录可能含有用户 `.env`，创建流程必须保留它并提供可恢复错误。"""
+
+    project = _project(tmp_path)
+    service = AgentCreationService(tmp_path, proposal_client=_ProposalClient(), embedding_dimensions=4)
+    plan = service.prepare(project)
+    directory = tmp_path / "agents" / "agent-hotel-employee"
+    directory.mkdir(parents=True)
+    environment_file = directory / ".env"
+    environment_file.write_text("MUYE_AGENT_TOKEN=example\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="目标 Agent 目录不完整"):
+        service.create(
+            project,
+            plan_checksum=plan.plan_checksum,
+            approved_by="reviewer",
+            run_tests=False,
+        )
+
+    assert environment_file.read_text(encoding="utf-8") == "MUYE_AGENT_TOKEN=example\n"
 
 
 def test_candidate_start_failure_terminates_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

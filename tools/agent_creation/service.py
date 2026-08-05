@@ -456,6 +456,18 @@ class AgentCreationService:
         directory = self._workspace_root / "agents" / f"agent-{plan.project_slug}"
         if not directory.exists() and not directory.is_symlink():
             return None
+        descriptor_path = directory / "agent.yaml"
+        if (
+            directory.is_symlink()
+            or not directory.is_dir()
+            or descriptor_path.is_symlink()
+            or not descriptor_path.is_file()
+        ):
+            raise FileExistsError(
+                "目标 Agent 目录不完整，拒绝覆盖以保护现有文件："
+                f"{directory}。请先将该目录移动到备份位置后重试，例如："
+                f"mv {directory} {directory}.incomplete"
+            )
         generator = AgentGenerator(GeneratorPaths.for_workspace(self._workspace_root))
         report = generator.validate(slug=plan.project_slug)
         if not report.is_valid:

@@ -112,6 +112,11 @@ class MuyeLLMProposalClient:
                 payload = response.json()
         except httpx.HTTPError as exc:
             raise RuntimeError("muye-llm 无法生成 Agent 创建提案") from exc
+        if not isinstance(payload, dict) or payload.get("success") is not True:
+            message = payload.get("message") if isinstance(payload, dict) else None
+            if isinstance(message, str) and message.strip():
+                raise RuntimeError(f"muye-llm 未能生成 Agent 创建提案：{message.strip()}")
+            raise RuntimeError("muye-llm 未能生成 Agent 创建提案")
         content = payload.get("data", {}).get("content") if isinstance(payload, dict) else None
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("muye-llm 返回了空的 Agent 创建提案")
