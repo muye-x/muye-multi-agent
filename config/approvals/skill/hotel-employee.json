@@ -1,0 +1,9 @@
+{
+  "approved_at": "2026-08-06T03:19:38Z",
+  "approved_by": "jimmy",
+  "checksum": "36f772d591866e144c0ea7f91b2a86acb74aeb0b7a95d860ec09ce8d46a5d9b5",
+  "revision": "retrieval/hotel-employee@1",
+  "schema_version": "muye.ai/generation-approval/v1",
+  "subject_slug": "hotel-employee",
+  "subject_type": "skill"
+}

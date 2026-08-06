@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-08-06T03:19:54Z",
+  "generated_files": [
+    ".dockerignore",
+    ".env.example",
+    ".muye-generation-input.json",
+    ".muye-generation.json",
+    "Dockerfile",
+    "README.md",
+    "agent.py",
+    "agent.yaml",
+    "main.py",
+    "prompts/system.md",
+    "requirements.txt",
+    "run-local.sh",
+    "tests/test_contract.py",
+    "tests/test_e2e.py",
+    "tests/test_retrieval.py"
+  ],
+  "generated_source_tree_checksum": "9d1cd4ac17b5ec2b6aa20f3e366a80ddf74d3596049fe8a5eefdbe0303c9ee11",
+  "generation_spec_checksum": "5b3b3e8edfdc5d45a17efc626b593ab921097a3373e8bb269e5a205bc0b2169d",
+  "generator_version": "2.0.0",
+  "knowledge_resource_checksum": "74a0bff49a89758298a46e9b57b087cb57ccfc663518a18c2c94acf6f6278739",
+  "profile_checksum": "9c17951ccfefbad221baff7a7aa9c9dce82ea6511410448419b954dff9ed180c",
+  "schema_version": "muye.ai/source-provenance/v1",
+  "sdk_version": "2.0.0",
+  "skill_checksum": "36f772d591866e144c0ea7f91b2a86acb74aeb0b7a95d860ec09ce8d46a5d9b5",
+  "template_id": "react-knowledge",
+  "template_version": "1.0.2"
+}
