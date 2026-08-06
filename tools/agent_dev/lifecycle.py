@@ -169,7 +169,9 @@ class AgentDevLifecycle:
             # Data 的临时注册表和 service token 属于本次会话，不能复用旧进程。
             reuse_healthy=False,
         )
-        deployment_id = f"{descriptor.agent_id}:{descriptor.version}:{source_checksum[:12]}"
+        # SDK 的 DataAccessContext 要求资源名语法；source checksum 同时绑定本次
+        # 源码身份，供 muye-data 在每次请求时重新校验。
+        deployment_id = f"deployment-{source_checksum[:12]}"
         supervisor.start(
             ServiceSpec(
                 name=f"agent-{descriptor.slug}",

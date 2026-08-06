@@ -242,9 +242,5 @@ class DataServiceAuthorizer:
             and request.headers.get("X-Muye-Agent-Version", "").strip() == agent_version
             and request.headers.get("X-Muye-Descriptor-Checksum", "").strip() == descriptor_checksum
             and request.headers.get("X-Muye-Source-Checksum", "").strip() == source_checksum
-            and re.fullmatch(
-                rf"{re.escape(agent_id)}:{re.escape(agent_version)}:[a-f0-9]{{12}}",
-                deployment_id,
-            )
-            is not None
+            and deployment_id == f"deployment-{source_checksum[:12]}"
         )

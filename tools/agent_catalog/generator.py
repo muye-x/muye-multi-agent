@@ -315,7 +315,7 @@ class AgentCatalogGenerator:
             "networks": ["internal"],
             "stop_grace_period": "20s",
             "environment": {
-                "MUYE_AGENT_DEPLOYMENT_ID": f"{descriptor.agent_id}:{descriptor.version}:{record.image_digest[7:19]}",
+                "MUYE_AGENT_DEPLOYMENT_ID": f"deployment-{item.source_checksum[:12]}",
                 "MUYE_AGENT_DESCRIPTOR_CHECKSUM": item.descriptor_checksum,
                 "MUYE_AGENT_MAIN_TOKEN": f"${{{token_prefix}_MAIN_TOKEN:?set {token_prefix}_MAIN_TOKEN}}",
                 "MUYE_AGENT_CONTROL_TOKEN": (

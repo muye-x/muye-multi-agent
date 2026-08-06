@@ -13,12 +13,9 @@ async function logout() {
 }
 </script>
 <template>
-  <main>
-    <nav v-if="$route.path !== '/login'">
-      <template v-if="localDev">
-        <strong>Muye Local Dev</strong><RouterLink to="/chat">对话</RouterLink>
-      </template>
-      <template v-else>
+  <main :class="{ 'local-dev-app': localDev }">
+    <nav v-if="$route.path !== '/login' && !localDev">
+      <template>
         <strong>Muye Control</strong><RouterLink to="/">状态</RouterLink
         ><RouterLink to="/chat">对话</RouterLink
         ><RouterLink to="/agents">Agents</RouterLink

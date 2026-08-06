@@ -5,8 +5,27 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from muye_multi_agent_sdk import AgentIdentity
+from muye_multi_agent_sdk.integrations.muye_data import DataAccessContext
 
 from tools.local_runtime.supervisor import LocalRuntimeSupervisor, ServiceSpec
+
+
+def test_local_dev_deployment_identity_is_accepted_by_sdk_data_context() -> None:
+    """local-dev 运行身份必须满足 SDK 的 ResourceName 边界。"""
+
+    context = DataAccessContext(
+        service_id="agent-local-handbook",
+        deployment_id="deployment-bbbbbbbbbbbb",
+        agent=AgentIdentity(
+            agent_id="agent_local_handbook",
+            agent_version="1.0.0",
+            descriptor_checksum="a" * 64,
+            source_tree_checksum="b" * 64,
+        ),
+    )
+
+    assert context.deployment_id == "deployment-bbbbbbbbbbbb"
 
 
 def test_exclusive_service_rejects_a_healthy_foreign_process(
@@ -26,4 +45,3 @@ def test_exclusive_service_rejects_a_healthy_foreign_process(
 
     with pytest.raises(RuntimeError, match="已由其他进程监听"):
         supervisor.start(spec, reuse_healthy=False)
-

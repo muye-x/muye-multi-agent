@@ -64,7 +64,7 @@ def _request(*, token: str = "product-data-token", overrides: dict[str, str] | N
     headers = {
         "Authorization": f"Bearer {token}",
         "X-Muye-Service-Id": "agent-product-handbook",
-        "X-Muye-Deployment-Id": "agent_product_handbook:1.0.0:cccccccccccc",
+        "X-Muye-Deployment-Id": "deployment-bbbbbbbbbbbb",
         "X-Muye-Agent-Id": "agent_product_handbook",
         "X-Muye-Agent-Version": "1.0.0",
         "X-Muye-Descriptor-Checksum": "a" * 64,
@@ -153,11 +153,16 @@ def _local_registration(path: Path) -> Path:
     return path
 
 
-def _local_request(*, token: str = "local-data-token", resource_checksum: str = "a" * 64) -> Request:
+def _local_request(
+    *,
+    token: str = "local-data-token",
+    resource_checksum: str = "a" * 64,
+    deployment_id: str = "deployment-bbbbbbbbbbbb",
+) -> Request:
     headers = {
         "Authorization": f"Bearer {token}",
         "X-Muye-Service-Id": "agent-local-handbook",
-        "X-Muye-Deployment-Id": "agent_local_handbook:1.0.0:bbbbbbbbbbbb",
+        "X-Muye-Deployment-Id": deployment_id,
         "X-Muye-Agent-Id": "agent_local_handbook",
         "X-Muye-Agent-Version": "1.0.0",
         "X-Muye-Descriptor-Checksum": resource_checksum,
@@ -188,6 +193,11 @@ def test_local_dev_registration_enforces_data_identity_and_resource_binding(tmp_
         authorizer.authorize(_local_request(), resource_id="kb.other")
     with pytest.raises(ServiceAuthorizationError):
         authorizer.authorize(_local_request(resource_checksum="c" * 64), resource_id="kb.local")
+    with pytest.raises(ServiceAuthorizationError):
+        authorizer.authorize(
+            _local_request(deployment_id="agent_local_handbook:1.0.0:bbbbbbbbbbbb"),
+            resource_id="kb.local",
+        )
 
 
 def test_data_rejects_simultaneous_production_and_local_dev_authorization(tmp_path: Path) -> None:
