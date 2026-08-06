@@ -1,13 +1,13 @@
 # 一键创建和测试知识 Agent
 
-本指南面向已有资料文件、希望在本地生成并立即测试知识 Agent 的使用者。推荐工作流只有两次操作：先使用自动审批模式生成 Agent，再在生成目录执行 `run-local.sh` 启动并测试它。
+本指南面向已有资料文件、希望在本地生成并立即联调知识 Agent 的使用者。推荐工作流会在创建成功后启动 Gateway -> Main -> SubAgent，本地验证真实编排而不进入镜像构建或发布流程。
 
 ```text
 准备本地依赖和配置
         ↓
-agent prepare --auto-approve
+agent prepare --auto-approved-by <reviewer> --dev
         ↓
-agents/agent-<slug>/run-local.sh
+http://127.0.0.1:5173/chat
 ```
 
 自动审批只省去人工确认计划的停顿；资料漂移检查、Milvus 构建、检索评测、Snapshot 发布和生成后的契约测试仍然必须通过。流程不会构建镜像、部署容器或授予终端用户访问权限。
@@ -91,45 +91,43 @@ Markdown 与 TXT 可直接处理。DOCX/PDF 需要 Docling；扫描 PDF 还需�
 
 ```bash
 ./scripts/muye.sh agent prepare agent-projects/<slug> \
-  --auto-approve \
-  --approved-by <reviewer>
+  --auto-approved-by <reviewer> \
+  --dev
 ```
 
 示例：
 ```bash
  ./scripts/muye.sh agent prepare agent-projects/hotel-employee \
-  --auto-approve \
-  --approved-by jimmy
+  --auto-approved-by jimmy \
+  --dev
 ```
 该命令会依次完成：解析资料、生成 Profile 和评测计划、写入 `<reviewer>` 的审批记录、构建不可变 Milvus Collection、执行 Dense/Keyword/Hybrid 检索评测、发布 active Resource Snapshot、生成 `agents/agent-<slug>/`，并执行生成 Agent 的契约测试。
-
-成功后直接进入生成目录：
-
-```bash
-cd agents/agent-<slug>
-```
 
 如果构建失败，CLI 会输出 Knowledge Job ID、错误码和报告路径。常见原因是 Embedding 上游不可达、Milvus 未启动、模型 alias 未注册或资料/评测不满足发布门禁；修正问题后重新运行同一条自动审批命令。
 
 ## 5. 一键启动和测试
 
-在生成目录执行：
+自动审批命令包含 `--dev` 时会在创建后立即启动联调。已有生成 Agent 则执行：
 
 ```bash
-./run-local.sh
+./scripts/muye.sh agent dev <slug>
 ```
 
-脚本会执行以下操作：
+该命令会执行以下操作：
 
 - 复用或启动本地 `muye-llm`；
-- 使用 active Resource Snapshot 复用或启动仅监听 `127.0.0.1:9840` 的 `muye-data`；
-- 首次创建 Agent 本地 `.env`，生成三个互不相同的内部 token 和运行身份字段；
-- 以服务方式启动当前 Agent；
-- 在控制台输出 `/health` 和带鉴权的 `/invoke` 命令。
+- 启动仅监听 `127.0.0.1:9840` 的 `muye-data`，并保留 SubAgent token、identity 与 Resource 校验；
+- 启动当前 Agent、local-dev Main 和仅监听 loopback 的 Vue Gateway；
+- 为当前会话创建一个单 Agent 的临时注册表及互不相同的内部 token；
+- 输出 `http://127.0.0.1:5173/chat`，以浏览器验证 SSE、工具步骤、citations 与错误事件。
 
-直接使用脚本输出的命令，或执行以下示例：
+local-dev 注册表不会写入生产 Catalog 或 Control grant；按 Ctrl+C 后，命令只停止本次会话创建的进程，并删除临时运行文件。根 `main.py` 不会因生成 Agent 而发生改动。
+
+`run-local.sh` 仍保留为 SubAgent 单体自测入口。需要排查 Agent 本身时，进入生成目录后执行：
 
 ```bash
+cd agents/agent-<slug>
+./run-local.sh
 curl --noproxy "*" http://127.0.0.1:8000/health
 
 curl --noproxy "*" -X POST http://127.0.0.1:8000/invoke \
@@ -140,7 +138,7 @@ curl --noproxy "*" -X POST http://127.0.0.1:8000/invoke \
 
 `/invoke` 返回 `tool_calls_made`、回答和 citations。资料没有足够依据时，Agent 应明确说明无法确认，而不是编造答案。
 
-日志位于生成目录的 `run-local-agent.log`、`run-local-muye-llm.log` 和 `run-local-muye-data.log`。`.env` 包含本地 token，不应提交或粘贴到终端记录之外；需要轮换本地 token 时，删除该 Agent 的 `.env` 后重新执行 `./run-local.sh`。
+`.env` 包含 `run-local.sh` 产生的本地 token，不应提交或粘贴到终端记录之外；需要轮换这些 token 时，删除该 Agent 的 `.env` 后重新执行 `./run-local.sh`。
 
 ## 高级用法：手动审批
 

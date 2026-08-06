@@ -31,7 +31,7 @@ def main(argv: Sequence[str] | None = None, *, workspace_root: Path | None = Non
     root = (workspace_root or Path.cwd()).resolve(strict=True)
     try:
         return arguments.handler(arguments, root)
-    except (FileExistsError, OSError, ValueError) as exc:
+    except (FileExistsError, OSError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

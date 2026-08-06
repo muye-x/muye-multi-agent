@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from dotenv import dotenv_values
+import pytest
 
 import main as launcher
 
@@ -86,6 +87,55 @@ def test_main_starts_services_without_reading_root_environment(monkeypatch, tmp_
     launcher.main()
 
     assert "MUYE_LLM_API_KEY" not in launcher.os.environ
+
+
+def test_start_service_exposes_workspace_contract_modules_to_children(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """服务本地包与根目录 ``contracts`` 必须同时可导入。"""
+
+    module_directory = tmp_path / "muye-data"
+    module_directory.mkdir()
+    captured: dict[str, object] = {}
+
+    class _Process:
+        stdout = None
+
+        def poll(self) -> None:
+            return None
+
+    class _Thread:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+    def _popen(*_args: object, **kwargs: object) -> _Process:
+        captured.update(kwargs)
+        return _Process()
+
+    service = {
+        "name": "muye-data",
+        "cwd": "muye-data",
+        "cmd": ["python", "main.py"],
+        "host_env": "MUYE_DATA_HOST",
+        "port_env": "MUYE_DATA_PORT",
+        "default_port": 9840,
+    }
+    monkeypatch.setattr(launcher, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(launcher, "_is_port_in_use", lambda _port: False)
+    monkeypatch.setattr(launcher, "wait_for_healthy", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(launcher.subprocess, "Popen", _popen)
+    monkeypatch.setattr(launcher.threading, "Thread", _Thread)
+    launcher._started_procs.clear()
+
+    assert launcher.start_service(service, health_timeout=1) is not None
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    paths = environment["PYTHONPATH"].split(launcher.os.pathsep)
+    assert paths[:2] == [str(module_directory), str(tmp_path)]
 
 
 def test_each_module_provides_safe_environment_example() -> None:

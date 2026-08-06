@@ -47,7 +47,7 @@ _DEFAULT_LLM_BASE_URL = "http://127.0.0.1:9850"
 _DEFAULT_MILVUS_URI = "http://127.0.0.1:19530"
 
 
-def _creation_environment(workspace_root: Path) -> dict[str, str]:
+def creation_environment(workspace_root: Path) -> dict[str, str]:
     """读取 Agent Creation 专属配置，不污染其他 CLI 子命令的进程环境。"""
 
     path = workspace_root / "tools" / "agent_creation" / ".env"
@@ -87,7 +87,7 @@ class AgentCreationService:
         embedding_dimensions: int | None = None,
     ) -> None:
         self._workspace_root = workspace_root.resolve(strict=True)
-        self._environment = _creation_environment(self._workspace_root)
+        self._environment = creation_environment(self._workspace_root)
         self._llm_base_url = self._environment.get(
             "MUYE_KNOWLEDGE_LLM_BASE_URL", _DEFAULT_LLM_BASE_URL
         ).rstrip("/")

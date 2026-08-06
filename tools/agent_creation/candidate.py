@@ -46,6 +46,11 @@ class CandidateDataService(AbstractContextManager["CandidateDataService"]):
         log_path = self._workspace_root / "config" / "generated" / "agent-creation-candidates" / f"{self._slug}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         environment = os.environ.copy()
+        existing_pythonpath = environment.get("PYTHONPATH", "")
+        pythonpath_entries = [str(self._workspace_root), str(self._workspace_root / "muye-data")]
+        if existing_pythonpath:
+            pythonpath_entries.append(existing_pythonpath)
+        environment["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
         environment.update(
             {
                 "MUYE_DATA_HOST": "127.0.0.1",

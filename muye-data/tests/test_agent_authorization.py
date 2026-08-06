@@ -10,6 +10,7 @@ from pydantic import SecretStr
 import pytest
 
 from contracts.catalog import build_catalog_snapshot
+from contracts.local_dev import LocalDevAgentV1, build_local_dev_registration
 from contracts.models import AgentCatalogEntryV1, ResourceBindingV1
 from src.auth import DataServiceAuthorizer
 from src.errors import (
@@ -123,6 +124,80 @@ def test_data_authorizer_configuration_requires_distinct_target_tokens(tmp_path:
                         "agent_other_service": "shared-token",
                     }
                 ),
+            },
+            base_directory=tmp_path,
+        )
+
+
+def _local_registration(path: Path) -> Path:
+    registration = build_local_dev_registration(
+        user_id="local-dev-user",
+        agent=LocalDevAgentV1(
+            agent_id="agent_local_handbook",
+            slug="local-handbook",
+            agent_version="1.0.0",
+            tool_name="local_help",
+            display_name="本地手册",
+            description="本地开发测试。",
+            supported_intents=["本地咨询"],
+            service_name="agent-local-handbook",
+            base_url="http://127.0.0.1:8001",
+            timeout_seconds=10,
+            internal_protocol_version="muye-agent-internal/3.0",
+            descriptor_checksum="a" * 64,
+            source_tree_checksum="b" * 64,
+            resource_bindings=[ResourceBindingV1(resource_id="kb.local", skill_ref="skill_local@1")],
+        ),
+    )
+    path.write_text(registration.model_dump_json(), encoding="utf-8")
+    return path
+
+
+def _local_request(*, token: str = "local-data-token", resource_checksum: str = "a" * 64) -> Request:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Muye-Service-Id": "agent-local-handbook",
+        "X-Muye-Deployment-Id": "agent_local_handbook:1.0.0:bbbbbbbbbbbb",
+        "X-Muye-Agent-Id": "agent_local_handbook",
+        "X-Muye-Agent-Version": "1.0.0",
+        "X-Muye-Descriptor-Checksum": resource_checksum,
+        "X-Muye-Source-Checksum": "b" * 64,
+    }
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/retrieve",
+            "headers": [(name.lower().encode(), value.encode()) for name, value in headers.items()],
+        }
+    )
+
+
+def test_local_dev_registration_enforces_data_identity_and_resource_binding(tmp_path: Path) -> None:
+    registration_path = _local_registration(tmp_path / "registration.json")
+    authorizer = DataServiceAuthorizer(
+        catalog_path=None,
+        local_dev_registration_path=registration_path,
+        tokens={"agent_local_handbook": SecretStr("local-data-token")},
+    )
+
+    authorizer.authorize(_local_request(), resource_id="kb.local")
+    with pytest.raises(ServiceAuthenticationError):
+        authorizer.authorize(_local_request(token="wrong-token"), resource_id="kb.local")
+    with pytest.raises(ServiceAuthorizationError):
+        authorizer.authorize(_local_request(), resource_id="kb.other")
+    with pytest.raises(ServiceAuthorizationError):
+        authorizer.authorize(_local_request(resource_checksum="c" * 64), resource_id="kb.local")
+
+
+def test_data_rejects_simultaneous_production_and_local_dev_authorization(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="只能配置生产 Catalog 或 local-dev"):
+        DataServiceAuthorizer.from_env(
+            {
+                "MUYE_DATA_AGENT_AUTH_ENABLED": "true",
+                "MUYE_DATA_AGENT_CATALOG_PATH": "active.json",
+                "MUYE_DATA_LOCAL_DEV_REGISTRATION_PATH": "registration.json",
+                "MUYE_DATA_AGENT_TOKENS_JSON": '{"agent_local_handbook":"local-data-token"}',
             },
             base_directory=tmp_path,
         )

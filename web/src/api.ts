@@ -2,6 +2,7 @@ export type Agent = { agent_id: string; agent_version: string; display_name: str
 export type User = { user_id: string; username: string; is_admin: boolean }
 
 const token = () => sessionStorage.getItem('muye_access_token')
+export const gatewayAuthorizationHeader = (): Record<string, string> => token() ? { Authorization: `Bearer ${token()}` } : {}
 let refreshInFlight: Promise<string | null> | null = null
 
 async function refreshAccessToken(): Promise<string | null> {

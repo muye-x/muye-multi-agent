@@ -12,6 +12,8 @@ from secrets import compare_digest
 from fastapi import Request
 from pydantic import SecretStr
 
+from contracts.local_dev import LocalDevRegistrationV1
+
 from src.errors import (
     AuthorizationUnavailableError,
     ServiceAuthenticationError,
@@ -32,17 +34,26 @@ def _canonical_checksum(value: object) -> str:
 class DataServiceAuthorizer:
     """按请求重新读取 active Catalog，使下线、降级和 Resource 撤权即时生效。"""
 
-    def __init__(self, *, catalog_path: Path | None, tokens: Mapping[str, SecretStr]) -> None:
-        if catalog_path is None and tokens:
-            raise ValueError("启用 Data Agent token 时必须配置 active Catalog 路径")
-        if catalog_path is not None and not tokens:
+    def __init__(
+        self,
+        *,
+        catalog_path: Path | None,
+        tokens: Mapping[str, SecretStr],
+        local_dev_registration_path: Path | None = None,
+    ) -> None:
+        if catalog_path is not None and local_dev_registration_path is not None:
+            raise ValueError("Data 不能同时加载生产 Catalog 和 local-dev 注册文件")
+        if catalog_path is None and local_dev_registration_path is None and tokens:
+            raise ValueError("启用 Data Agent token 时必须配置 active Catalog 或 local-dev 注册路径")
+        if (catalog_path is not None or local_dev_registration_path is not None) and not tokens:
             raise ValueError("启用 Data Agent 身份时至少需要一个目标绑定 token")
         self._catalog_path = catalog_path
+        self._local_dev_registration_path = local_dev_registration_path
         self._tokens = dict(tokens)
 
     @property
     def enabled(self) -> bool:
-        return self._catalog_path is not None
+        return self._catalog_path is not None or self._local_dev_registration_path is not None
 
     @classmethod
     def from_env(
@@ -59,10 +70,11 @@ class DataServiceAuthorizer:
             return cls(catalog_path=None, tokens={})
 
         configured_path = environ.get("MUYE_DATA_AGENT_CATALOG_PATH", "").strip()
-        if not configured_path:
-            raise ValueError("启用 Data Agent 身份时必须配置 MUYE_DATA_AGENT_CATALOG_PATH")
-        path = Path(configured_path)
-        catalog_path = path if path.is_absolute() else base_directory / path
+        local_dev_path = environ.get("MUYE_DATA_LOCAL_DEV_REGISTRATION_PATH", "").strip()
+        if bool(configured_path) == bool(local_dev_path):
+            raise ValueError("启用 Data Agent 身份时必须且只能配置生产 Catalog 或 local-dev 注册路径")
+        path = Path(configured_path or local_dev_path)
+        resolved_path = path if path.is_absolute() else base_directory / path
 
         raw_tokens = environ.get("MUYE_DATA_AGENT_TOKENS_JSON", "")
         try:
@@ -83,7 +95,11 @@ class DataServiceAuthorizer:
                 raise ValueError("每个 SubAgent 必须使用不同的 Data service token")
             normalized_values.add(normalized)
             tokens[agent_id] = SecretStr(normalized)
-        return cls(catalog_path=catalog_path, tokens=tokens)
+        return cls(
+            catalog_path=resolved_path if configured_path else None,
+            local_dev_registration_path=resolved_path if local_dev_path else None,
+            tokens=tokens,
+        )
 
     def authorize(self, request: Request, *, resource_id: str) -> None:
         """验证 Bearer token、部署 identity 和 active Catalog Resource 绑定。"""
@@ -101,15 +117,7 @@ class DataServiceAuthorizer:
         ):
             raise ServiceAuthenticationError()
 
-        snapshot = self._load_catalog()
-        entry = next(
-            (
-                item
-                for item in snapshot["agents"]
-                if isinstance(item, dict) and item.get("agent_id") == agent_id and item.get("status") == "ACTIVE"
-            ),
-            None,
-        )
+        entry = self._authorized_entry(agent_id)
         if entry is None or not self._identity_matches(request, entry):
             raise ServiceAuthorizationError()
         resources = entry.get("resource_bindings")
@@ -120,6 +128,45 @@ class DataServiceAuthorizer:
         } if isinstance(resources, list) else set()
         if resource_id not in allowed_resources:
             raise ServiceAuthorizationError()
+
+    def _authorized_entry(self, agent_id: str) -> dict[str, object] | None:
+        """从当前生产 Catalog 或本地单 Agent 注册中取得目标身份。"""
+
+        if self._local_dev_registration_path is not None:
+            registration = self._load_local_dev_registration()
+            agent = registration.agent
+            if agent.agent_id != agent_id:
+                return None
+            return {
+                "agent_id": agent.agent_id,
+                "agent_version": agent.agent_version,
+                "service_name": agent.service_name,
+                "descriptor_checksum": agent.descriptor_checksum,
+                "source_tree_checksum": agent.source_tree_checksum,
+                "resource_bindings": [binding.model_dump(mode="json") for binding in agent.resource_bindings],
+            }
+        snapshot = self._load_catalog()
+        return next(
+            (
+                item
+                for item in snapshot["agents"]
+                if isinstance(item, dict) and item.get("agent_id") == agent_id and item.get("status") == "ACTIVE"
+            ),
+            None,
+        )
+
+    def _load_local_dev_registration(self) -> LocalDevRegistrationV1:
+        path = self._local_dev_registration_path
+        assert path is not None
+        if path.is_symlink() or not path.is_file():
+            raise AuthorizationUnavailableError()
+        try:
+            raw_bytes = path.read_bytes()
+            if len(raw_bytes) > 262_144:
+                raise ValueError("local-dev registration exceeds size limit")
+            return LocalDevRegistrationV1.model_validate_json(raw_bytes)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise AuthorizationUnavailableError() from exc
 
     def _load_catalog(self) -> dict[str, object]:
         path = self._catalog_path

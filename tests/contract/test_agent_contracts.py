@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from contracts.local_dev import LocalDevAgentV1, build_local_dev_registration
 from contracts.models import (
     CONTRACT_SCHEMA_MODELS,
     AgentBuildRecordV1,
@@ -128,3 +129,56 @@ def test_typescript_dto_fields_match_pydantic_contracts() -> None:
 
         assert set(actual_fields) == expected_fields
         assert actual_required == expected_required
+
+
+def _local_dev_agent(**overrides: object) -> LocalDevAgentV1:
+    """构造单 Agent 本地联调注册项，供 loopback 边界回归使用。"""
+
+    values: dict[str, object] = {
+        "agent_id": "agent_local_handbook",
+        "slug": "local-handbook",
+        "agent_version": "1.0.0",
+        "tool_name": "local_help",
+        "display_name": "本地手册",
+        "description": "仅用于本地联调。",
+        "supported_intents": ["本地咨询"],
+        "service_name": "agent-local-handbook",
+        "base_url": "http://127.0.0.1:8001",
+        "timeout_seconds": 10,
+        "internal_protocol_version": "muye-agent-internal/3.0",
+        "descriptor_checksum": "a" * 64,
+        "source_tree_checksum": "b" * 64,
+        "resource_bindings": [ResourceBindingV1(resource_id="kb.local", skill_ref="skill_local@1")],
+    }
+    values.update(overrides)
+    return LocalDevAgentV1.model_validate(values)
+
+
+@pytest.mark.parametrize("base_url", ["http://localhost:8001", "https://127.0.0.1:8001", "http://10.0.0.1:8001", "http://127.0.0.1:8001/path"])
+def test_local_dev_registration_rejects_non_literal_loopback_targets(base_url: str) -> None:
+    """开发注册表不能成为 Main 访问任意本地网络目标的通道。"""
+
+    with pytest.raises(ValidationError, match="loopback"):
+        _local_dev_agent(base_url=base_url)
+
+
+def test_local_dev_registration_checksum_detects_tampering() -> None:
+    registration = build_local_dev_registration(user_id="local-dev-user", agent=_local_dev_agent())
+    payload = registration.model_dump(mode="json")
+    payload["agent"]["description"] = "篡改后的内容"
+
+    with pytest.raises(ValidationError, match="checksum"):
+        type(registration).model_validate(payload)
+
+
+def test_local_dev_registration_uses_descriptor_slug_for_service_identity() -> None:
+    """Agent ID 可独立命名，local-dev 服务身份必须沿用正式的 slug 规则。"""
+
+    registration = build_local_dev_registration(
+        user_id="local-dev-user",
+        agent=_local_dev_agent(agent_id="agent_hotel_hr", slug="hotel-employee", service_name="agent-hotel-employee"),
+    )
+
+    assert registration.agent.service_name == "agent-hotel-employee"
+    with pytest.raises(ValidationError, match="slug"):
+        _local_dev_agent(agent_id="agent_hotel_hr", slug="hotel-employee", service_name="agent-hotel-hr")

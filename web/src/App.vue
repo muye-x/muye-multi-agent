@@ -2,6 +2,7 @@
 import { RouterLink, RouterView, useRouter } from "vue-router";
 import { api } from "./api";
 const router = useRouter();
+const localDev = import.meta.env.DEV && import.meta.env.VITE_MUYE_LOCAL_DEV === "true";
 async function logout() {
   try {
     await api.logout();
@@ -14,10 +15,16 @@ async function logout() {
 <template>
   <main>
     <nav v-if="$route.path !== '/login'">
-      <strong>Muye Control</strong><RouterLink to="/">状态</RouterLink
-      ><RouterLink to="/agents">Agents</RouterLink
-      ><RouterLink to="/grants">授权</RouterLink
-      ><button title="退出登录" aria-label="退出登录" @click="logout">退出</button>
+      <template v-if="localDev">
+        <strong>Muye Local Dev</strong><RouterLink to="/chat">对话</RouterLink>
+      </template>
+      <template v-else>
+        <strong>Muye Control</strong><RouterLink to="/">状态</RouterLink
+        ><RouterLink to="/chat">对话</RouterLink
+        ><RouterLink to="/agents">Agents</RouterLink
+        ><RouterLink to="/grants">授权</RouterLink
+        ><button title="退出登录" aria-label="退出登录" @click="logout">退出</button>
+      </template>
     </nav>
     <RouterView />
   </main>

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -13,9 +14,10 @@ import httpx
 from pydantic import SecretStr
 
 from contracts.catalog import build_catalog_snapshot, validate_catalog_snapshot_checksum
+from contracts.local_dev import LocalDevRegistrationV1
 from contracts.models import AgentCatalogSnapshotV1
 
-from .registry import SubAgentRegistry
+from .registry import SubAgentDescriptor, SubAgentRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -288,3 +290,86 @@ class CatalogProvider:
                 await self.refresh()
             except CatalogUnavailableError:
                 logger.exception("Agent Catalog 轮询失败，继续使用上一份有效 Catalog")
+
+
+class LocalDevCatalogProvider:
+    """从受限运行时文件加载单 Agent local-dev Registry。
+
+    该 provider 不访问 Control，也不会接受生产 Catalog；每次授权请求都会重新读取
+    注册文件，以便会话清理或文件异常时立即降级为拒绝。
+    """
+
+    def __init__(self, *, registration_path: Path, user_id: str) -> None:
+        self._registration_path = registration_path
+        self._user_id = user_id
+        self._registration: LocalDevRegistrationV1 | None = None
+        self._registry = SubAgentRegistry([])
+
+    @property
+    def snapshot(self) -> AgentCatalogSnapshotV1:
+        """兼容 Main 状态读取；local-dev 不会暴露正式 Snapshot。"""
+
+        return build_catalog_snapshot([])
+
+    async def start(self) -> None:
+        self._load()
+
+    async def close(self) -> None:
+        self._registration = None
+        self._registry = SubAgentRegistry([])
+
+    async def authorized_view(self, user_id: str) -> AuthorizedCatalogView:
+        registration = self._load()
+        if user_id != self._user_id or registration.user_id != self._user_id:
+            return AuthorizedCatalogView(
+                user_id=user_id,
+                catalog_revision=registration.catalog_revision,
+                catalog_checksum=registration.catalog_checksum,
+                allowed_agent_ids=frozenset(),
+                registry=SubAgentRegistry([]),
+            )
+        descriptor = self._registry.values()[0]
+        return AuthorizedCatalogView(
+            user_id=user_id,
+            catalog_revision=registration.catalog_revision,
+            catalog_checksum=registration.catalog_checksum,
+            allowed_agent_ids=frozenset({descriptor.agent_id}),
+            registry=self._registry,
+        )
+
+    def _load(self) -> LocalDevRegistrationV1:
+        path = self._registration_path
+        if path.is_symlink() or not path.is_file():
+            raise CatalogUnavailableError("local-dev 注册文件不可用")
+        try:
+            raw = path.read_bytes()
+            if len(raw) > 262_144:
+                raise ValueError("registration too large")
+            registration = LocalDevRegistrationV1.model_validate_json(raw)
+        except (OSError, ValueError) as exc:
+            raise CatalogUnavailableError("local-dev 注册文件无效") from exc
+        agent = registration.agent
+        self._registration = registration
+        self._registry = SubAgentRegistry(
+            [
+                SubAgentDescriptor(
+                    name=agent.tool_name,
+                    url=agent.base_url,
+                    timeout_seconds=agent.timeout_seconds,
+                    profile="internal",
+                    agent_id=agent.agent_id,
+                    agent_version=agent.agent_version,
+                    display_name=agent.display_name,
+                    description=agent.description,
+                    supported_intents=tuple(agent.supported_intents),
+                    service_name=agent.service_name,
+                    protocol_version=agent.internal_protocol_version,
+                    descriptor_checksum=agent.descriptor_checksum,
+                    source_tree_checksum=agent.source_tree_checksum,
+                    catalog_revision=registration.catalog_revision,
+                    catalog_checksum=registration.catalog_checksum,
+                    max_concurrency=agent.max_concurrency,
+                )
+            ]
+        )
+        return registration

@@ -31,4 +31,9 @@ def trusted_user_id(request: Request) -> str | None:
             status_code=401,
             detail={"code": "AUTHENTICATION_ERROR", "message": "可信 CallerContext 无效"},
         )
+    if config.local_dev_enabled and user_id != config.local_dev_user_id:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "AUTHENTICATION_ERROR", "message": "local-dev 用户身份无效"},
+        )
     return user_id

@@ -340,15 +340,24 @@ def test_candidate_start_failure_terminates_process(tmp_path: Path, monkeypatch:
             self.waited = True
 
     process = _Process()
+    captured: dict[str, object] = {}
+
+    def _popen(*_args: object, **kwargs: object) -> _Process:
+        captured.update(kwargs)
+        return process
+
     candidate = CandidateDataService(workspace_root=tmp_path, slug="hotel-employee", connection="milvus_default")
     monkeypatch.setattr("tools.agent_creation.candidate._available_loopback_port", lambda: 19000)
-    monkeypatch.setattr("tools.agent_creation.candidate.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr("tools.agent_creation.candidate.subprocess.Popen", _popen)
     monkeypatch.setattr(candidate, "_wait_ready", lambda: (_ for _ in ()).throw(RuntimeError("not ready")))
 
     with pytest.raises(RuntimeError, match="not ready"):
         candidate.__enter__()
     assert process.terminated
     assert process.waited
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["PYTHONPATH"].split(os.pathsep)[:2] == [str(tmp_path), str(tmp_path / "muye-data")]
 
 
 def test_creation_environment_does_not_mutate_process_environment(

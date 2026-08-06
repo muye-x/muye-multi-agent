@@ -3,6 +3,7 @@ Agent 管理器 - 单例模式管理 Agent 实例
 """
 import asyncio
 import logging
+from pathlib import Path
 import uuid
 from contextlib import AsyncExitStack
 from typing import Optional, Dict, Any
@@ -17,6 +18,7 @@ from tools.sub_agent.catalog import (
     CatalogProvider,
     CatalogUnavailableError,
     HttpControlPlaneClient,
+    LocalDevCatalogProvider,
 )
 from tools.sub_agent.registry import SubAgentRegistry
 from tools.sub_agent.runtime import SubAgentRuntimeGuard
@@ -29,6 +31,12 @@ logger = logging.getLogger(__name__)
 STREAM_LOCK_WAIT_TIMEOUT_SECONDS = 60.0
 STREAM_IDLE_TIMEOUT_SECONDS = 60.0
 STREAM_MAX_HOLD_TIMEOUT_SECONDS = 300.0
+
+
+async def _record_local_dev_citation(*_args: object, **_kwargs: object) -> None:
+    """local-dev 仅允许 citation 进入当前 SSE，不写入生产 Control。"""
+
+    return None
 
 
 def _is_sub_agent_tool_event(event: dict[str, Any]) -> bool:
@@ -50,7 +58,7 @@ class AgentManager:
         self.message_builder = MessageBuilder()
         self.initialized = False
         self.execution_manager = ExecutionManager()
-        self.catalog_provider: CatalogProvider | None = None
+        self.catalog_provider: CatalogProvider | LocalDevCatalogProvider | None = None
         self.sub_agent_runtime_guard: SubAgentRuntimeGuard | None = None
         self._authorized_agents: dict[tuple[str, tuple[str, ...]], MainAgentOrchestrator] = {}
         self._agent_token_provider = None
@@ -83,13 +91,19 @@ class AgentManager:
 
             catalog_config = config.catalog
             control_client = None
-            if catalog_config.enabled:
+            if catalog_config.control_enabled:
                 control_client = HttpControlPlaneClient(
                     base_url=catalog_config.control_base_url,
                     service_token=SecretStr(catalog_config.main_service_token),
                     timeout_seconds=catalog_config.control_timeout_seconds,
                 )
-            self.catalog_provider = CatalogProvider(control_client, poll_seconds=catalog_config.poll_seconds)
+            if catalog_config.local_dev_enabled:
+                self.catalog_provider = LocalDevCatalogProvider(
+                    registration_path=Path(catalog_config.local_dev_registration_path),
+                    user_id=catalog_config.local_dev_user_id,
+                )
+            else:
+                self.catalog_provider = CatalogProvider(control_client, poll_seconds=catalog_config.poll_seconds)
             await self.catalog_provider.start()
             self.sub_agent_runtime_guard = SubAgentRuntimeGuard(
                 failure_threshold=catalog_config.circuit_failure_threshold,
@@ -98,6 +112,8 @@ class AgentManager:
             self._agent_token_provider = catalog_config.agent_token
             if control_client is not None:
                 self._citation_recorder = control_client.record_citation
+            elif catalog_config.local_dev_enabled:
+                self._citation_recorder = _record_local_dev_citation
 
             # 空 Catalog 也必须健康启动；授权视图按请求创建并缓存对应 graph。
             self.agent = MainAgentOrchestrator(

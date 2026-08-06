@@ -423,7 +423,9 @@ def start_service(svc: dict, health_timeout: int) -> Optional[subprocess.Popen]:
         return sentinel
 
     env = os.environ.copy()
-    pythonpath_entries = [str(cwd)]
+    # 服务模块会从各自的工作目录导入 ``src`` 等局部包；本次 local-dev
+    # 契约位于仓库根目录，根启动器必须同时暴露这两个导入边界。
+    pythonpath_entries = [str(cwd), str(PROJECT_ROOT)]
     existing_pythonpath = os.environ.get("PYTHONPATH", "")
     if existing_pythonpath:
         pythonpath_entries.append(existing_pythonpath)

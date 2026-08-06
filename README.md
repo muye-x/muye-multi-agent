@@ -5,7 +5,7 @@ Muye Multi-Agent Scaffold 是一个基于
 统一模型网关、可选只读数据召回服务、主编排 Agent、两个子 Agent 示例以及可选的 Nginx Gateway；SDK 在独立仓储
 维护，并通过 Python 包依赖接入。
 
-首次从资料创建知识 Agent 的推荐路径是：配置模型和 Milvus，使用自动审批生成 Agent，再在生成目录执行 `run-local.sh` 完成本地服务测试。创建流程与完整多服务部署相互独立，开发者可以先完成知识 Agent 验证，再接入 Catalog、Control 和 Gateway。
+首次从资料创建知识 Agent 的推荐路径是：配置模型和 Milvus，使用自动审批生成 Agent，并用 `--dev` 直接启动 Gateway -> Main -> SubAgent 本地联调。创建和本地联调均独立于完整多服务部署；开发者无需先构建镜像、发布 Catalog 或授予正式用户权限。
 
 ## 界面预览
 
@@ -83,7 +83,7 @@ python3 -m venv .venv
 | `agents/agent-main/.env.example` | 主 Agent、存储、检索与子 Agent 地址 | 单独部署 `agent-main` |
 | `control_server/.env.example` | PostgreSQL、Control 身份与 Catalog 配置 | 单独部署或 Compose Control |
 | `muye-gateway/.env.example` | Nginx、TLS、Gateway 与控制台配置 | 单独部署 Gateway |
-| `tools/agent_creation/.env.example` | 创建 Agent 的 LLM 与 Milvus 连接 | 执行 `agent prepare --auto-approve` 或手动 `prepare/create` |
+| `tools/agent_creation/.env.example` | 创建 Agent 的 LLM 与 Milvus 连接 | 执行 `agent prepare --auto-approved-by ... --dev` 或手动 `prepare/create` |
 | `tools/agent_catalog/.env.example` | Agent 生命周期 CLI 的部署与 smoke 配置 | 执行 `agent build/deploy/stop/rollback` |
 
 首次创建知识 Agent 只需要以下两个配置文件：
@@ -184,26 +184,25 @@ agent-projects/<slug>/
 
 ```bash
 ./scripts/muye.sh agent prepare agent-projects/<slug> \
-  --auto-approve \
-  --approved-by <reviewer>
+  --auto-approved-by <reviewer> \
+  --dev
 ```
 
-命令会生成计划和审批记录，构建不可变 Milvus Collection，执行 Dense、Keyword、Hybrid 检索评测，发布 active Resource Snapshot，生成 `agents/agent-<slug>/`，并运行生成 Agent 的契约测试。`--auto-approve` 只跳过人工审阅停顿，不会绕过资料漂移检查、Embedding、Milvus 构建或评测门禁。
+命令会生成计划和审批记录，构建不可变 Milvus Collection，执行 Dense、Keyword、Hybrid 检索评测，发布 active Resource Snapshot，生成 `agents/agent-<slug>/`，并运行生成 Agent 的契约测试。`--auto-approved-by` 只合并自动审批人的标识，不会绕过资料漂移检查、Embedding、Milvus 构建或评测门禁。
 
 构建失败时，CLI 会输出 Knowledge Job ID、错误码和报告路径。优先检查：Embedding 上游是否可用、模型 alias 是否注册、Milvus 是否可访问，以及资料是否包含评测所需依据。
 
-### 5. 一键本地测试
-
-进入生成目录并启动：
+### 5. Gateway 本地联调
 
 ```bash
-cd agents/agent-<slug>
-./run-local.sh
+./scripts/muye.sh agent dev <slug>
 ```
 
-`run-local.sh` 会复用或启动本地 `muye-llm`、`muye-data` 和当前 Agent；首次运行会创建该 Agent 的本地 `.env`，生成互不相同的 Main、Control、Data token 及运行身份字段。脚本不会启动 Milvus，且当前本地测试配置使用 `127.0.0.1:19530`；使用远程 Milvus 时应按部署环境管理 `muye-data`，而不是将远程数据库纳入本地测试脚本。
+`agent dev` 启动或复用仅监听 loopback 的 `muye-llm`、`muye-data`、当前 SubAgent、local-dev Main 与 Vue Gateway。浏览器打开 `http://127.0.0.1:5173/chat`，即可验证 Main 的路由、工具调用、citation 和错误事件。按 Ctrl+C 会停止本次启动的进程，并删除 `config/runtime/dev/<slug>/` 中的临时运行文件。
 
-启动成功后，脚本会输出带鉴权的 `/invoke` 命令。示例：
+开发注册表只允许本次命令的一个 `127.0.0.1`/`::1` SubAgent，并使用专用开发身份；它不会修改 Control active Catalog、BuildRecord 或正式 grant。根目录 `main.py` 不参与这条路径，避免每个新 Agent 都修改生产启动编排。
+
+需要只测试 SubAgent 本身时，仍可进入生成目录执行 `./run-local.sh`。该脚本不会启动 Main 和 Gateway，适合用 `/invoke` 排查 Agent 自身问题：
 
 ```bash
 curl --noproxy "*" http://127.0.0.1:8000/health
@@ -214,7 +213,7 @@ curl --noproxy "*" -X POST http://127.0.0.1:8000/invoke \
   -d '{"task":"请根据资料回答一个问题。","context":{"user_id":"local_user","session_id":"local_session"}}'
 ```
 
-回答中应包含检索工具调用和 citations。资料没有依据时，Agent 必须明确说明无法确认，不能编造业务规则。日志位于生成目录的 `run-local-agent.log`、`run-local-muye-llm.log` 和 `run-local-muye-data.log`。
+回答中应包含检索工具调用和 citations。资料没有依据时，Agent 必须明确说明无法确认，不能编造业务规则。
 
 需要审阅计划、处理复杂变更或接入 CI 时，再使用手动 `agent prepare` 与 `agent create` 命令；详见[快速开始的高级用法](docs/agent-creation-quickstart.md#高级用法手动审批)。
 

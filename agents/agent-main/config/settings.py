@@ -113,6 +113,13 @@ class LLMConfig:
 class CatalogConfig:
     """Main 到 Control 的 Catalog、授权和服务身份配置。"""
 
+    mode: str = field(
+        default_factory=lambda: os.getenv(
+            "MUYE_CATALOG_MODE",
+            "control" if os.getenv("MUYE_CONTROL_BASE_URL", "").strip() else "disabled",
+        ).strip().lower()
+    )
+
     control_base_url: str = field(
         default_factory=lambda: os.getenv('MUYE_CONTROL_BASE_URL', '').strip()
     )
@@ -137,10 +144,24 @@ class CatalogConfig:
     circuit_recovery_seconds: float = field(
         default_factory=lambda: float(os.getenv('MUYE_AGENT_CIRCUIT_RECOVERY_SECONDS', '30'))
     )
+    local_dev_registration_path: str = field(
+        default_factory=lambda: os.getenv("MUYE_LOCAL_DEV_REGISTRATION_PATH", "").strip()
+    )
+    local_dev_user_id: str = field(
+        default_factory=lambda: os.getenv("MUYE_LOCAL_DEV_USER_ID", "").strip()
+    )
 
     @property
     def enabled(self) -> bool:
-        return bool(self.control_base_url)
+        return self.mode != "disabled"
+
+    @property
+    def control_enabled(self) -> bool:
+        return self.mode == "control"
+
+    @property
+    def local_dev_enabled(self) -> bool:
+        return self.mode == "local-dev"
 
     def agent_token(self, agent_id: str) -> str | None:
         """按稳定 agent_id 读取目标绑定 token，不接受 Catalog 提供环境变量名。"""
@@ -621,11 +642,24 @@ def validate_config(config: Config) -> None:
     elif not config.llm.api_base.startswith(("http://", "https://")):
         errors.append("MUYE_LLM_BASE_URL 必须以 http:// 或 https:// 开头")
 
-    if config.catalog.enabled:
+    if config.catalog.mode not in {"disabled", "control", "local-dev"}:
+        errors.append("MUYE_CATALOG_MODE 必须是 disabled、control 或 local-dev")
+    if config.catalog.control_enabled:
+        if not config.catalog.control_base_url:
+            errors.append("MUYE_CATALOG_MODE=control 时必须配置 MUYE_CONTROL_BASE_URL")
         if not config.catalog.main_service_token:
-            errors.append("MUYE_CONTROL_BASE_URL 启用时必须配置 MUYE_CONTROL_MAIN_TOKEN")
+            errors.append("MUYE_CATALOG_MODE=control 时必须配置 MUYE_CONTROL_MAIN_TOKEN")
         if not config.catalog.trusted_caller_token:
-            errors.append("MUYE_CONTROL_BASE_URL 启用时必须配置 MUYE_MAIN_CALLER_TOKEN")
+            errors.append("MUYE_CATALOG_MODE=control 时必须配置 MUYE_MAIN_CALLER_TOKEN")
+    if config.catalog.local_dev_enabled:
+        if config.catalog.control_base_url:
+            errors.append("MUYE_CATALOG_MODE=local-dev 时不能配置 MUYE_CONTROL_BASE_URL")
+        if not config.catalog.local_dev_registration_path:
+            errors.append("MUYE_CATALOG_MODE=local-dev 时必须配置 MUYE_LOCAL_DEV_REGISTRATION_PATH")
+        if not config.catalog.local_dev_user_id:
+            errors.append("MUYE_CATALOG_MODE=local-dev 时必须配置 MUYE_LOCAL_DEV_USER_ID")
+        if not config.catalog.trusted_caller_token:
+            errors.append("MUYE_CATALOG_MODE=local-dev 时必须配置 MUYE_MAIN_CALLER_TOKEN")
     try:
         config.catalog.agent_token("agent_validation_probe")
     except ValueError as exc:

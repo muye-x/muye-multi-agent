@@ -90,12 +90,12 @@ SDK 负责 internal Agent 通信协议、checkpointer 生命周期、同会话�
 `IntentGuard` 是独立、默认关闭的可选输入分类能力；主 Agent 没有自动启用它，也没有用它替换
 已有意图约束。
 
-## 本地控制台
+## 本地联调界面
 
-`muye-gateway` 的本地 Dashboard API 提供
-`http://127.0.0.1:9870/console/online.html`。控制台生成随机 Session ID，并在浏览器
-`localStorage` 保存对话历史；该浏览器历史与服务端 `/history` 接口相互独立。工具过程在完成
-后会自动折叠，正文按原始 Markdown 换行渲染。
+旧的 `online.html` 是依赖固定示例 Agent 的静态页面，已随固定示例清理而删除。当前在线体验
+迁移到 Vue 的 `/chat` 路由：执行 `./scripts/muye.sh agent dev <slug>` 后访问
+`http://127.0.0.1:5173/chat`。界面通过 Vite 的仅本地代理向 Main 注入开发身份，浏览器不会接触
+内部 token；它展示 SSE 正文、工具过程、citation 和错误，原始 SSE 调试抽屉仅在 local-dev 中可用且默认关闭。
 
 ## 验证
 

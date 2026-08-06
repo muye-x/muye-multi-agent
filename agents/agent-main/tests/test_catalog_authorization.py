@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from contracts.catalog import build_catalog_snapshot
+from contracts.local_dev import LocalDevAgentV1, build_local_dev_registration
 from contracts.models import AgentCatalogEntryV1, ResourceBindingV1
 from config.settings import CatalogConfig
 from tools.sub_agent.catalog import (
@@ -12,6 +14,7 @@ from tools.sub_agent.catalog import (
     CatalogProvider,
     CatalogUnavailableError,
     CitationEvidence,
+    LocalDevCatalogProvider,
 )
 from tools.sub_agent.registry import SubAgentDescriptor, SubAgentRegistry
 from tools.sub_agent.runtime import SubAgentRuntimeError, SubAgentRuntimeGuard
@@ -292,3 +295,56 @@ def test_two_users_only_receive_their_authorized_agent_tools() -> None:
     assert [(tool.name, tool.description) for tool in finance_tools] == [
         ("finance_help", "查询财务手册。 支持的意图：财务咨询。")
     ]
+
+
+def _local_registration_path(tmp_path: Path) -> Path:
+    registration = build_local_dev_registration(
+        user_id="local-dev-user",
+        agent=LocalDevAgentV1(
+            agent_id="agent_local_handbook",
+            slug="local-handbook",
+            agent_version="1.0.0",
+            tool_name="local_help",
+            display_name="本地手册",
+            description="仅供本地开发联调的手册。",
+            supported_intents=["本地咨询"],
+            service_name="agent-local-handbook",
+            base_url="http://127.0.0.1:8001",
+            timeout_seconds=10,
+            internal_protocol_version="muye-agent-internal/3.0",
+            descriptor_checksum="a" * 64,
+            source_tree_checksum="b" * 64,
+            resource_bindings=[ResourceBindingV1(resource_id="kb.local", skill_ref="skill_local@1")],
+        ),
+    )
+    path = tmp_path / "registration.json"
+    path.write_text(registration.model_dump_json(), encoding="utf-8")
+    return path
+
+
+def test_local_dev_provider_exposes_only_registered_agent_to_local_user(tmp_path: Path) -> None:
+    provider = LocalDevCatalogProvider(
+        registration_path=_local_registration_path(tmp_path),
+        user_id="local-dev-user",
+    )
+
+    local_view = asyncio.run(provider.authorized_view("local-dev-user"))
+    other_view = asyncio.run(provider.authorized_view("other-user"))
+
+    assert local_view.catalog_revision.startswith("local-dev-")
+    assert [item.agent_id for item in local_view.registry.values()] == ["agent_local_handbook"]
+    assert other_view.allowed_agent_ids == frozenset()
+    assert other_view.registry.values() == ()
+
+
+def test_local_dev_provider_fails_closed_for_tampered_registration(tmp_path: Path) -> None:
+    path = _local_registration_path(tmp_path)
+    path.write_text("{}", encoding="utf-8")
+    provider = LocalDevCatalogProvider(registration_path=path, user_id="local-dev-user")
+
+    try:
+        asyncio.run(provider.authorized_view("local-dev-user"))
+    except CatalogUnavailableError:
+        pass
+    else:
+        raise AssertionError("损坏的 local-dev 注册文件必须拒绝授权")
