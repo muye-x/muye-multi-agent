@@ -58,7 +58,7 @@ curl --noproxy "*" http://127.0.0.1:9850/api/v2/models
 ```
 ## 3. 准备资料项目
 
-资料项目位于 `agent-projects/`，但生成后的源码位于 `agents/agent-<slug>/`。两者不能混用，且目标 Agent 目录不能预先存在。
+资料项目位于 `agent-projects/`，但生成后的源码位于 `agents/agent-<slug>/`。两者不能混用；首次生成时，目标 Agent 目录不能预先存在。
 
 ```text
 agent-projects/<slug>/
@@ -84,6 +84,8 @@ examples:
 ```
 
 Markdown 与 TXT 可直接处理。DOCX/PDF 需要 Docling；扫描 PDF 还需在 `project.yaml` 启用 `ocr_available: true` 并提供相应 OCR capability。`embedding_batch_size` 可按上游模型限制设置为 `1` 到 `256`。
+
+仓库提交 [`agent-projects/hotel-employee/`](../agent-projects/hotel-employee/) 作为可运行的示例输入，包含 `project.yaml` 和员工手册资料。它不是预生成 Agent：干净 checkout 不包含 `agents/agent-hotel-employee/`、Milvus Collection、MinIO 数据或创建过程产生的配置文件。运行下一节命令后，CLI 才会在本机创建这些结果。
 
 ## 4. 一键生成
 
