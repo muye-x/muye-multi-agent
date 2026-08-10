@@ -1,5 +1,7 @@
 # muye-data
 
+[English overview](README.en.md)
+
 `muye-data` 是一个只读的 Milvus 检索服务。它负责查询解析、候选召回、Hybrid 融合和
 可选 Rerank；数据库建库建表、索引、Embedding 生产、数据写入、更新和删除均由阶段 4
 Knowledge Worker 或独立数据项目负责。

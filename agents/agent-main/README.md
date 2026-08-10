@@ -1,5 +1,7 @@
 # Muye Main Agent
 
+[English overview](README.en.md)
+
 `agent-main` 是 Muye Multi-Agent 的主编排服务。它接收用户对话，协调 `muye-llm`、网页与
 子 Agent 工具，并通过 HTTP SSE 返回模型正文和执行过程。服务默认仅监听
 `127.0.0.1:9860`；需要外部访问时应经由 `muye-gateway` 的 allowlist 和 Bearer Token。

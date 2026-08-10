@@ -1,5 +1,7 @@
 # 阶段 1 垂直 PoC
 
+[English overview](README.en.md)
+
 该 PoC 验证阶段 1 的前半段：受控 Markdown 解析、稳定 checksum、受限 Profile、`AgentGenerationSpecV1`
 组装、一次性 ReAct Agent 目录渲染，以及开发者修改后拒绝覆盖。
 
