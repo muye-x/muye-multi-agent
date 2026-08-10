@@ -1,8 +1,21 @@
+<div align="center">
+
 # Muye Multi-Agent Scaffold v2.1
 
-Muye Multi-Agent Scaffold 是一个基于
-[`muye-multi-agent-sdk`](https://github.com/muye-x/muye-multi-agent-sdk) 的多 Agent 开发与运行脚手架。
-v2.1 的核心能力是将业务资料直接转换为可运行的知识 Agent，并通过一条命令完成知识构建、质量评测、代码生成和本地 Web 联调：
+**开源、自托管的知识 Agent 构建与多 Agent 运行脚手架**
+
+业务资料 -> 知识构建与评测 -> 独立 SubAgent -> 本地联调 -> 可审计部署
+
+[English](README.en.md) · 简体中文
+
+![License](https://img.shields.io/badge/license-MIT-0f766e) ![Python](https://img.shields.io/badge/python-3.11%2B-0f766e) ![Architecture](https://img.shields.io/badge/architecture-Multi--Agent-0f766e) ![Protocol](https://img.shields.io/badge/streaming-SSE-0f766e)
+
+![Muye v2.1 本地 Agent 联调界面](docs/images/v2.1-local-agent-chat.png)
+
+</div>
+
+Muye Multi-Agent Scaffold 基于
+[`muye-multi-agent-sdk`](https://github.com/muye-x/muye-multi-agent-sdk)，将业务资料直接转换为可运行的知识 Agent。单条命令即可完成知识构建、质量评测、代码生成和本地 Web 联调：
 
 ```bash
 ./scripts/muye.sh agent prepare agent-projects/<slug> \
@@ -13,18 +26,31 @@ v2.1 的核心能力是将业务资料直接转换为可运行的知识 Agent，
 开发者无需先构建 Docker 镜像、发布 Catalog 或配置正式用户权限，即可验证完整的
 Gateway -> MainAgent -> SubAgent 调用链路。
 
-![Muye v2.1 本地 Agent 联调界面](docs/images/v2.1-local-agent-chat.png)
+> 面向需要将受控业务资料交付为可验证知识 Agent 的开发团队。脚手架将“能生成”与“可评测、可审计、可部署”放在同一条工作流中。
 
-## v2.1 主要能力
+## 1. 解决的问题
 
-- **一键生成 Agent**：从 `project.yaml` 和业务资料生成独立的 `agents/agent-<slug>/`，自动完成计划、审批记录、知识构建和契约测试。
-- **知识质量门禁**：构建不可变 Milvus Collection，执行 Dense、Keyword、Hybrid 检索评测，通过后才发布 active Resource Snapshot。
-- **完整本地联调**：自动启动或复用 `muye-llm`、`muye-data`、生成的 SubAgent、local-dev MainAgent 和 Vue Web Gateway。
-- **流式 Web 对话**：支持 SSE block 流式输出、工具执行过程、Markdown 与表格、停止生成、对话历史和逐轮 SSE 调试。
-- **多 Agent 编排**：MainAgent 根据能力描述调用 SubAgent，统一处理模型、工具、citation、会话和错误事件。
-- **生产生命周期**：提供 Agent 构建、Catalog 同步、部署、停止和回滚命令，并保持开发环境与正式授权数据隔离。
+| 开发与交付难点 | Scaffold 提供的能力 |
+| --- | --- |
+| **资料难以成为可运行 Agent** | 从受版本控制的 `project.yaml` 和源资料生成独立 SubAgent、描述符和契约测试。 |
+| **检索质量无法证明** | 对不可变 Milvus Collection 执行 Dense、Keyword、Hybrid 评测；达标后才发布 Resource Snapshot。 |
+| **本地链路难以复现** | 一条命令启动或复用 LLM、Data、MainAgent、SubAgent 与 Vue Web Gateway。 |
+| **流式过程难以调试** | Web 对话展示 SSE 正文、工具执行、citation、错误和逐轮原始事件。 |
+| **开发与生产授权相互干扰** | local-dev 使用临时身份和运行目录，正式 Catalog、BuildRecord 与用户 grant 保持隔离。 |
+| **Agent 生命周期缺少约束** | 提供构建、Catalog 同步、部署、停止和回滚命令，并校验 checksum、健康状态与调用链。 |
 
-## 架构
+## 2. 能力地图
+
+| 阶段 | 主要能力 | 产出或保障 |
+| --- | --- | --- |
+| **定义** | `project.yaml`、业务资料、创建计划与审批记录 | 可版本控制的 Agent 输入与可追溯确认。 |
+| **知识构建** | 文档解析、不可变 Collection、Embedding 与资源快照 | 资料、知识版本和 Milvus 实体边界清晰。 |
+| **质量评测** | Dense、Keyword、Hybrid 检索与 citation 覆盖门禁 | 未通过评测的候选不会成为 active Snapshot。 |
+| **生成与验证** | 模板生成、描述符、检索测试与契约测试 | 独立、可验证的 `agents/agent-<slug>/`。 |
+| **本地联调** | MainAgent 编排、SSE、Vue Web Gateway 与调试抽屉 | 端到端调用链在生产发布前可真实验证。 |
+| **生产生命周期** | Catalog、grant、健康检查、部署、停止与回滚 | 部署状态和授权数据受控且可审计。 |
+
+## 3. 架构
 
 ```text
 Web / API Client
@@ -50,7 +76,7 @@ control  -->  Catalog / grant / health / citation authorization
 | Web Dev Gateway | 5173 | v2.1 本地对话和 SSE 调试界面 |
 | `muye-gateway` | 80/443 | 正式环境 TLS、鉴权与公网路由 |
 
-## 快速开始
+## 4. 快速开始
 
 ### 1. 安装依赖
 
@@ -149,7 +175,7 @@ http://127.0.0.1:5173/chat
 ./scripts/muye.sh agent dev <slug>
 ```
 
-## Web 联调体验
+## 5. Web 联调体验
 
 v2.1 的 `/chat` 页面用于检查真实的 MainAgent -> SubAgent 执行过程：
 
@@ -160,7 +186,7 @@ v2.1 的 `/chat` 页面用于检查真实的 MainAgent -> SubAgent 执行过程�
 - 对话、思考过程和 SSE 调试记录保存在浏览器 `localStorage`，历史对话可单独删除。
 - 对话区独立滚动，输入区固定置底，并支持终止当前流式请求。
 
-## 常用命令
+## 6. 常用命令
 
 | 命令 | 用途 |
 | --- | --- |
@@ -177,7 +203,7 @@ v2.1 的 `/chat` 页面用于检查真实的 MainAgent -> SubAgent 执行过程�
 需要人工审阅创建计划、处理资料变更或接入 CI 时，可使用分步审批流程。详见
 [一键创建和测试知识 Agent](docs/agent-creation-quickstart.md)。
 
-## 流式协议
+## 7. 流式协议
 
 SubAgent 提供 `/health`、`/capabilities`、`/invoke`、`/invoke/stream` 和 `/cancel` internal API。
 流式事件生命周期为：
@@ -188,7 +214,7 @@ session_start -> block / tool / thinking -> done -> session_end
 
 同一 `block.id` 的 `delta` 按到达顺序追加；不同 block 必须独立处理。
 
-## 测试
+## 8. 测试
 
 ```bash
 PYTHONPATH=muye-llm:muye-gateway \
@@ -201,7 +227,9 @@ PYTHONPATH=agents/agent-main \
 .venv/bin/python main.py --dry-run
 ```
 
-## 文档
+## 9. 文档
+
+英文读者可先查看 [English documentation index](docs/README.en.md)，以获取各中文权威文档的英文说明和入口。
 
 - [一键创建和测试知识 Agent](docs/agent-creation-quickstart.md)
 - [模板 Agent Generator 与开发者接管](docs/v2.0-agent-generator.md)
@@ -211,11 +239,13 @@ PYTHONPATH=agents/agent-main \
 - [运维指南](docs/v2.0-operations.md)
 - [发布检查表](docs/v2.0-release-checklist.md)
 
-## 安全边界
+## 10. 安全边界
 
 - `agent dev` 只监听 loopback，每次仅注册当前 SubAgent，并使用临时随机 Token 和 local-dev 身份。
 - 本地联调数据写入 `config/runtime/dev/<slug>/`，不会修改正式 Control Catalog、BuildRecord 或用户 grant。
 - `muye-data` 与 `muye-llm` 只应由可信内网服务访问；数据库账号必须限制为只读权限。
 - 生产环境只公开 Gateway 的 Web、`/api/v2/` 和 `/agentMain/`，所有 SubAgent 均使用 internal profile。
 
-项目许可证：[MIT](LICENSE)。第三方资源许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## 许可证
+
+本项目采用 [MIT License](LICENSE) 发布。第三方资源许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

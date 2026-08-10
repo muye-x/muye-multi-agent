@@ -1,5 +1,7 @@
 # Muye Gateway
 
+[English overview](README.en.md)
+
 Gateway 是唯一公网入口，只公开 Web 控制台、Control 的 `/api/v2/` 与 Main 的
 `/agentMain/`。SubAgent、LLM、Data、Control internal API 和 Dashboard API 均在内部网络。
 

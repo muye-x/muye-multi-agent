@@ -1,5 +1,7 @@
 # Muye 模型中心
 
+[English overview](README.en.md)
+
 `muye-llm` 是仅供可信内网服务调用的模型网关。它为 Chat、Embedding 和 Rerank 提供独立的
 模型别名注册表，并负责模型能力校验、上游超时与有限重试。Rerank 首版适配 DashScope，默认
 关闭。服务不包含计费、用量上报或 `usage_context` 兼容层。Tracing 默认关闭，开启后只上报

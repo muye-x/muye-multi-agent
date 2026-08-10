@@ -1,5 +1,7 @@
 # Agent 项目输入
 
+[English overview](README.en.md)
+
 `agent-projects/` 存放可版本控制的 Agent 创建输入。每个子目录都应包含 `project.yaml` 和 `sources/`，并可直接作为 `agent prepare` 的参数。
 
 ```bash
