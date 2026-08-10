@@ -1,0 +1,10 @@
+# Control API、服务启动与配置加载
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+
+# 用户身份、会话与授权持久化
+argon2-cffi==23.1.0
+psycopg[binary]>=3.2.0
