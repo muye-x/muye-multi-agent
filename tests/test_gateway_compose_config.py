@@ -34,6 +34,11 @@ def test_core_compose_mounts_tls_and_provides_agent_dependencies() -> None:
     assert agent_main["environment"]["MUYE_AGENT_HOST"] == "0.0.0.0"
     assert agent_main["environment"]["MUYE_SDK_DATA_BASE_URL"] == "http://muye-data:9840"
     assert "MUYE_SERVER_HOST" not in agent_main["environment"]
+    assert agent_main["build"] == {
+        "context": ".",
+        "dockerfile": "agents/agent-main/Dockerfile",
+    }
+    assert agent_main["command"] == ["python", "main.py"]
 
     for service_name in (
         "postgres",
@@ -61,3 +66,17 @@ def test_generated_agent_compose_uses_internal_llm_and_data_urls() -> None:
 
     assert '"MUYE_LLM_BASE_URL": "http://muye-llm:9850"' in source
     assert '"MUYE_SDK_DATA_BASE_URL": "http://muye-data:9840"' in source
+
+
+def test_agent_main_image_copies_repository_contracts_package() -> None:
+    source = (PROJECT_ROOT / "agents" / "agent-main" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "COPY contracts ./contracts" in source
+    assert "COPY agents/agent-main ./agent-main" in source
+    assert "PYTHONPATH=/app" in source
+
+    dockerignore = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    assert "**/.env" in dockerignore
+    assert "!**/.env.example" in dockerignore

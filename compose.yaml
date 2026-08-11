@@ -49,8 +49,10 @@ services:
     expose: ["9870"]
 
   agent-main:
-    build: .
-    command: ["python", "agents/agent-main/main.py"]
+    build:
+      context: .
+      dockerfile: agents/agent-main/Dockerfile
+    command: ["python", "main.py"]
     env_file:
       - path: ./agents/agent-main/.env
         required: false

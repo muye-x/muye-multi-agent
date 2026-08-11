@@ -1,0 +1,33 @@
+# Runtime configuration and credentials must be injected at container startup.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.secret
+secrets.json
+credentials.json
+
+# Local development and test artifacts are not runtime source.
+.git
+.venv
+venv
+env
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+.mypy_cache
+.ruff_cache
+*.db
+*.sqlite
+*.sqlite3
+logs
+web/node_modules

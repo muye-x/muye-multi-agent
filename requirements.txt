@@ -1,5 +1,5 @@
 muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@v2.0.0
-argon2-cffi==23.1.0
+-r ./control_server/requirements.txt
 -r ./muye-llm/requirements.txt
 -r ./muye-data/requirements.txt
 -r ./agents/agent-main/requirements.txt

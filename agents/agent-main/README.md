@@ -15,8 +15,16 @@ cd agents/agent-main
 ../../.venv/bin/python main.py
 ```
 
-单独部署此服务时，可在当前目录使用 `requirements.txt` 安装依赖；其中 SDK 固定从公开 GitHub
-仓储安装，不依赖本地相邻的 `sdk/` 目录。
+单独部署此服务时，`requirements.txt` 只安装第三方依赖；`contracts/` 是仓库自有的共享 Python
+包，不能用同名 PyPI 包替代。应从仓库根目录构建专用镜像，确保它被复制到镜像中：
+
+```bash
+docker build -f agents/agent-main/Dockerfile -t muye-agent-main:latest .
+```
+
+不要以 `agents/agent-main/` 作为 Docker build context。该目录不包含 `contracts/`，会导致
+`ModuleNotFoundError: No module named 'contracts.models'`。SDK 仍固定从公开 GitHub 仓储安装，
+不依赖本地相邻的 `sdk/` 目录。
 
 根目录也可按依赖顺序启动全部服务：
 
