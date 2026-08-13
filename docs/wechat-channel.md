@@ -5,14 +5,14 @@
 
 ## 启用
 
-复制 `muye-channels/.env.example` 为 `.env`，生成并注入三个互不相同的随机值：
+复制 `muye-channels/.env.example` 为 `.env`，配置 PostgreSQL 连接并生成三个互不相同的随机值：
 `MUYE_CHANNELS_CALLER_TOKEN`、`MUYE_CHANNELS_MAIN_TOKEN` 和
 `MUYE_CHANNELS_ENCRYPTION_KEY`。后者必须为 base64 编码的 32 字节 AES-GCM 密钥。
 同时将 `MUYE_CHANNELS_MAIN_TOKEN` 设置到 `agents/agent-main/.env`，并将 channels
-caller token 设置到 Gateway 环境。
+caller token 设置到 Gateway 环境。渠道状态写入 PostgreSQL 的 `channel_*` 表。
 
 本地启动器仅在 `MUYE_CHANNELS_ENABLED=true` 时启动该服务。生产 Compose 使用
-`--profile channels` 启动，并将单实例 SQLite 状态挂载到 `channels-state` volume。
+`--profile channels` 启动；渠道绑定、游标、消息和投递状态写入 PostgreSQL。
 绑定页面位于控制台的“微信”导航项，登录用户只能管理自己的一个活动微信绑定；再次确认二维码会替换旧绑定。
 
 ## 安全与语义

@@ -126,11 +126,12 @@ services:
     environment:
       MUYE_CHANNELS_HOST: 0.0.0.0
       MUYE_CHANNELS_MAIN_URL: http://agent-main:9860
-      MUYE_CHANNELS_SQLITE_PATH: /var/lib/muye/channels/channels.db
-    depends_on: [agent-main]
+      MUYE_CHANNELS_DATABASE_URL: ${MUYE_CHANNELS_DATABASE_URL:-postgresql://muye:muye@postgres:5432/muye}
+    depends_on:
+      agent-main: { condition: service_started }
+      postgres: { condition: service_healthy }
     networks: [internal]
     expose: ["9890"]
-    volumes: [channels-state:/var/lib/muye/channels]
     profiles: ["channels"]
 
 networks:
@@ -140,4 +141,3 @@ networks:
 volumes:
   postgres-data: {}
   control-state: {}
-  channels-state: {}

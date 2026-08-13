@@ -8,17 +8,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import json
 import logging
 import os
 import secrets
-import sqlite3
-import time
 import uuid
 from io import BytesIO
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from secrets import compare_digest
 from typing import Any
 from urllib.parse import urlsplit
@@ -44,7 +40,7 @@ class ChannelConfig(BaseModel):
     main_url: str = Field(min_length=8)
     main_token: str = Field(min_length=16)
     encryption_key: str = Field(min_length=40)
-    sqlite_path: Path
+    database_url: str = Field(min_length=16)
     ilink_base_url: str
     allowed_hosts: set[str]
 
@@ -57,7 +53,7 @@ class ChannelConfig(BaseModel):
             main_url=os.getenv("MUYE_CHANNELS_MAIN_URL", "http://127.0.0.1:9860").rstrip("/"),
             main_token=os.getenv("MUYE_CHANNELS_MAIN_TOKEN", "").strip(),
             encryption_key=os.getenv("MUYE_CHANNELS_ENCRYPTION_KEY", "").strip(),
-            sqlite_path=Path(os.getenv("MUYE_CHANNELS_SQLITE_PATH", "state/channels.db")),
+            database_url=os.getenv("MUYE_CHANNELS_DATABASE_URL", "").strip(),
             ilink_base_url=base_url,
             allowed_hosts=allowed,
         )
@@ -73,7 +69,7 @@ class VerifyRequest(BaseModel):
 
 
 class CryptoBox:
-    """对 SQLite 中的 provider 私密字段使用 AES-GCM 加密。"""
+    """对 PostgreSQL 中的 provider 私密字段使用 AES-GCM 加密。"""
 
     def __init__(self, encoded_key: str) -> None:
         try:
@@ -106,111 +102,149 @@ class Binding:
 
 
 class ChannelStore:
-    """SQLite 状态仓库；一个用户仅可拥有一个活动微信绑定。"""
+    """PostgreSQL 渠道仓储；一个用户仅可拥有一个活动微信绑定。"""
 
-    def __init__(self, path: Path, crypto: CryptoBox) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
+    def __init__(self, database_url: str, crypto: CryptoBox) -> None:
+        if not database_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("MUYE_CHANNELS_DATABASE_URL 必须是 PostgreSQL URL")
+        try:
+            from psycopg_pool import AsyncConnectionPool
+        except ImportError as exc:  # pragma: no cover - dependency gate
+            raise RuntimeError("channels PostgreSQL 存储需要 psycopg_pool") from exc
+        self._pool = AsyncConnectionPool(database_url, open=False, kwargs={"autocommit": False})
         self._crypto = crypto
-        self._lock = asyncio.Lock()
-        self._connection.executescript("""
-            CREATE TABLE IF NOT EXISTS wechat_bindings (
-              user_id TEXT PRIMARY KEY, binding_id TEXT UNIQUE NOT NULL,
-              bot_token BLOB NOT NULL, base_url TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1
-            );
-            CREATE TABLE IF NOT EXISTS wechat_qr_sessions (
-              session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, qrcode BLOB NOT NULL, qr_content TEXT NOT NULL,
-              verify_code BLOB, created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS wechat_messages (
-              message_key TEXT PRIMARY KEY, binding_id TEXT NOT NULL, sender_key TEXT NOT NULL,
-              context_token BLOB NOT NULL, target_user BLOB NOT NULL, content BLOB NOT NULL, state TEXT NOT NULL
-            );
-        """)
-        self._connection.commit()
+    async def initialize(self) -> None:
+        await self._pool.open()
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS channel_bindings (
+                      user_id TEXT PRIMARY KEY, binding_id TEXT UNIQUE NOT NULL,
+                      bot_token BYTEA NOT NULL, base_url TEXT NOT NULL,
+                      cursor TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    );
+                    CREATE TABLE IF NOT EXISTS channel_qr_sessions (
+                      session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+                      qrcode BYTEA NOT NULL, qr_content TEXT NOT NULL, verify_code BYTEA,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    );
+                    CREATE TABLE IF NOT EXISTS channel_messages (
+                      message_key TEXT PRIMARY KEY, binding_id TEXT NOT NULL,
+                      provider_message_id TEXT NOT NULL, sender_key TEXT NOT NULL,
+                      context_token BYTEA NOT NULL, target_user BYTEA NOT NULL, content BYTEA NOT NULL,
+                      state TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                      UNIQUE(binding_id, provider_message_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS channel_deliveries (
+                      idempotency_key TEXT PRIMARY KEY, request_fingerprint TEXT NOT NULL,
+                      status TEXT NOT NULL, provider_message_id TEXT, error_code TEXT,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    );
+                    CREATE TABLE IF NOT EXISTS channel_leases (
+                      binding_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, lease_until TIMESTAMPTZ NOT NULL
+                    );
+                """)
+            await connection.commit()
+
+    async def close(self) -> None:
+        await self._pool.close()
 
     async def create_qr(self, user_id: str, qrcode: str, content: str) -> str:
         session_id = f"wqr_{uuid.uuid4().hex}"
-        async with self._lock:
-            self._connection.execute("DELETE FROM wechat_qr_sessions WHERE user_id = ?", (user_id,))
-            self._connection.execute("INSERT INTO wechat_qr_sessions VALUES (?, ?, ?, ?, NULL, ?)", (session_id, user_id, self._crypto.encrypt(qrcode), content, int(time.time())))
-            self._connection.commit()
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("DELETE FROM channel_qr_sessions WHERE user_id = %s", (user_id,))
+                await cursor.execute("INSERT INTO channel_qr_sessions (session_id,user_id,qrcode,qr_content) VALUES (%s,%s,%s,%s)", (session_id, user_id, self._crypto.encrypt(qrcode), content))
+            await connection.commit()
         return session_id
 
     async def qr_session(self, user_id: str, session_id: str) -> tuple[str, str] | None:
-        async with self._lock:
-            row = self._connection.execute("SELECT qrcode, verify_code FROM wechat_qr_sessions WHERE session_id = ? AND user_id = ?", (session_id, user_id)).fetchone()
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT qrcode, verify_code FROM channel_qr_sessions WHERE session_id = %s AND user_id = %s", (session_id, user_id))
+                row = await cursor.fetchone()
         if row is None:
             return None
-        return self._crypto.decrypt(row["qrcode"]), self._crypto.decrypt(row["verify_code"]) if row["verify_code"] else ""
+        return self._crypto.decrypt(row[0]), self._crypto.decrypt(row[1]) if row[1] else ""
 
     async def set_verify_code(self, user_id: str, session_id: str, code: str) -> bool:
-        async with self._lock:
-            result = self._connection.execute("UPDATE wechat_qr_sessions SET verify_code = ? WHERE session_id = ? AND user_id = ?", (self._crypto.encrypt(code), session_id, user_id))
-            self._connection.commit()
-        return result.rowcount == 1
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("UPDATE channel_qr_sessions SET verify_code = %s WHERE session_id = %s AND user_id = %s", (self._crypto.encrypt(code), session_id, user_id))
+                changed = cursor.rowcount == 1
+            await connection.commit()
+        return changed
 
     async def activate(self, user_id: str, bot_token: str, base_url: str) -> Binding:
         binding = Binding(f"wechat_{uuid.uuid4().hex}", user_id, bot_token, base_url)
-        async with self._lock:
-            previous = self._connection.execute("SELECT binding_id FROM wechat_bindings WHERE user_id = ?", (user_id,)).fetchone()
-            self._connection.execute("DELETE FROM wechat_bindings WHERE user_id = ?", (user_id,))
-            if previous is not None:
-                self._connection.execute("DELETE FROM wechat_messages WHERE binding_id = ?", (previous["binding_id"],))
-            self._connection.execute("INSERT INTO wechat_bindings (user_id, binding_id, bot_token, base_url) VALUES (?, ?, ?, ?)", (user_id, binding.binding_id, self._crypto.encrypt(bot_token), base_url))
-            self._connection.execute("DELETE FROM wechat_qr_sessions WHERE user_id = ?", (user_id,))
-            self._connection.commit()
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("DELETE FROM channel_bindings WHERE user_id = %s", (user_id,))
+                await cursor.execute("INSERT INTO channel_bindings (user_id,binding_id,bot_token,base_url) VALUES (%s,%s,%s,%s)", (user_id, binding.binding_id, self._crypto.encrypt(bot_token), base_url))
+                await cursor.execute("DELETE FROM channel_qr_sessions WHERE user_id = %s", (user_id,))
+            await connection.commit()
         return binding
 
     async def binding(self, user_id: str) -> Binding | None:
-        async with self._lock:
-            row = self._connection.execute("SELECT * FROM wechat_bindings WHERE user_id = ? AND active = 1", (user_id,)).fetchone()
-        return Binding(row["binding_id"], row["user_id"], self._crypto.decrypt(row["bot_token"]), row["base_url"]) if row else None
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT binding_id,user_id,bot_token,base_url FROM channel_bindings WHERE user_id = %s AND active", (user_id,))
+                row = await cursor.fetchone()
+        return Binding(row[0], row[1], self._crypto.decrypt(row[2]), row[3]) if row else None
 
     async def remove(self, user_id: str) -> None:
-        async with self._lock:
-            self._connection.execute("DELETE FROM wechat_bindings WHERE user_id = ?", (user_id,))
-            self._connection.execute("DELETE FROM wechat_qr_sessions WHERE user_id = ?", (user_id,))
-            self._connection.commit()
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("DELETE FROM channel_bindings WHERE user_id = %s", (user_id,))
+                await cursor.execute("DELETE FROM channel_qr_sessions WHERE user_id = %s", (user_id,))
+            await connection.commit()
 
     async def bindings(self) -> list[Binding]:
-        async with self._lock:
-            rows = self._connection.execute("SELECT * FROM wechat_bindings WHERE active = 1").fetchall()
-        return [Binding(row["binding_id"], row["user_id"], self._crypto.decrypt(row["bot_token"]), row["base_url"]) for row in rows]
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT binding_id,user_id,bot_token,base_url FROM channel_bindings WHERE active")
+                rows = await cursor.fetchall()
+        return [Binding(row[0], row[1], self._crypto.decrypt(row[2]), row[3]) for row in rows]
 
     async def cursor(self, binding: Binding) -> str:
-        async with self._lock:
-            row = self._connection.execute("SELECT cursor FROM wechat_bindings WHERE binding_id = ?", (binding.binding_id,)).fetchone()
-        return str(row["cursor"]) if row else ""
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT cursor FROM channel_bindings WHERE binding_id = %s", (binding.binding_id,))
+                row = await cursor.fetchone()
+        return str(row[0]) if row else ""
 
-    async def record_messages(self, binding: Binding, cursor: str, messages: list[tuple[str, str, str, str]]) -> list[tuple[str, str, str, str]]:
+    async def record_messages(self, binding: Binding, next_cursor: str, messages: list[tuple[str, str, str, str]]) -> list[tuple[str, str, str, str]]:
         """持久化游标与去重 inbox；返回本次首次领取的消息。"""
         accepted: list[tuple[str, str, str, str]] = []
-        async with self._lock:
+        async with self._pool.connection() as connection:
+          async with connection.cursor() as db_cursor:
             for provider_message_id, sender, context_token, content in messages:
                 message_key = self._crypto.stable_id(binding.binding_id, provider_message_id)
-                result = self._connection.execute(
-                    "INSERT OR IGNORE INTO wechat_messages VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-                    (message_key, binding.binding_id, self._crypto.stable_id(binding.binding_id, sender), self._crypto.encrypt(context_token), self._crypto.encrypt(sender), self._crypto.encrypt(content)),
+                await db_cursor.execute(
+                    "INSERT INTO channel_messages (message_key,binding_id,provider_message_id,sender_key,context_token,target_user,content,state) VALUES (%s,%s,%s,%s,%s,%s,%s,'pending') ON CONFLICT DO NOTHING",
+                    (message_key, binding.binding_id, provider_message_id, self._crypto.stable_id(binding.binding_id, sender), self._crypto.encrypt(context_token), self._crypto.encrypt(sender), self._crypto.encrypt(content)),
                 )
-                if result.rowcount:
+                if db_cursor.rowcount:
                     accepted.append((message_key, sender, context_token, content))
-            self._connection.execute("UPDATE wechat_bindings SET cursor = ? WHERE binding_id = ?", (cursor, binding.binding_id))
-            self._connection.commit()
+            await db_cursor.execute("UPDATE channel_bindings SET cursor = %s, updated_at = now() WHERE binding_id = %s", (next_cursor, binding.binding_id))
+          await connection.commit()
         return accepted
 
     async def claim(self, message_key: str) -> bool:
         """至多一次领取 Agent 调用；重启后的 processing 消息保持静默而非重复执行。"""
-        async with self._lock:
-            result = self._connection.execute("UPDATE wechat_messages SET state = 'processing' WHERE message_key = ? AND state = 'pending'", (message_key,))
-            self._connection.commit()
-        return result.rowcount == 1
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("UPDATE channel_messages SET state = 'processing' WHERE message_key = %s AND state = 'pending'", (message_key,))
+                changed = cursor.rowcount == 1
+            await connection.commit()
+        return changed
 
     async def finish(self, message_key: str, state: str) -> None:
-        async with self._lock:
-            self._connection.execute("UPDATE wechat_messages SET state = ? WHERE message_key = ?", (state, message_key))
-            self._connection.commit()
+        async with self._pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("UPDATE channel_messages SET state = %s WHERE message_key = %s", (state, message_key))
+            await connection.commit()
 
 
 class ILinkClient:
@@ -295,11 +329,15 @@ async def _poll_binding(store: ChannelStore, ilink: ILinkClient, agent: ChannelA
         if not await store.claim(message_key):
             continue
         request = ChannelInvokeRequest(
+            protocol_version="muye-agent-channel/2.0",
             channel="wechat",
             user_id=binding.user_id,
             session_id=f"wechat_{crypto.stable_id(binding.binding_id, sender)}",
             trace_id=f"wechat-{uuid.uuid4().hex}",
             message_id=message_key,
+            channel_account_id=binding.binding_id,
+            conversation_id=f"wechat_{crypto.stable_id(binding.binding_id, sender)}",
+            reply_handle=context_token,
             message={"type": "text", "content": content},
         )
         try:
@@ -318,13 +356,14 @@ def create_app(config: ChannelConfig | None = None, *, client: httpx.AsyncClient
     """创建同源绑定 API；Gateway 负责登录态并注入可信用户身份。"""
     resolved = config or ChannelConfig.from_env()
     crypto = CryptoBox(resolved.encryption_key)
-    store = ChannelStore(resolved.sqlite_path, crypto)
+    store = ChannelStore(resolved.database_url, crypto)
     upstream = client or httpx.AsyncClient(timeout=40, trust_env=False)
     ilink = ILinkClient(resolved, upstream)
     agent = ChannelAgentClient(resolved.main_url, resolved.main_token)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        await store.initialize()
         stopped = asyncio.Event()
 
         async def poll_loop() -> None:
@@ -347,6 +386,7 @@ def create_app(config: ChannelConfig | None = None, *, client: httpx.AsyncClient
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             await agent.aclose()
+            await store.close()
             if client is None:
                 await upstream.aclose()
 
