@@ -3,6 +3,7 @@ API 请求/响应模型
 """
 from typing import Optional
 from pydantic import BaseModel, Field
+from muye_multi_agent_sdk import ChannelInvokeResponse
 
 
 class UserLocation(BaseModel):
@@ -35,3 +36,6 @@ class ChatResponse(BaseModel):
     session_id: str
     message: str
     error: Optional[str] = None
+
+
+ChannelResponse = ChannelInvokeResponse

@@ -129,6 +129,9 @@ class CatalogConfig:
     trusted_caller_token: str = field(
         default_factory=lambda: os.getenv('MUYE_MAIN_CALLER_TOKEN', '').strip()
     )
+    channels_caller_token: str = field(
+        default_factory=lambda: os.getenv('MUYE_CHANNELS_MAIN_TOKEN', '').strip()
+    )
     agent_tokens_json: str = field(
         default_factory=lambda: os.getenv('MUYE_MAIN_AGENT_TOKENS_JSON', '{}')
     )

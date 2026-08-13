@@ -4,6 +4,7 @@ FastAPI 服务端 - 支持流式/非流式对话、多轮对话、记忆管理
 import asyncio
 import sys
 import logging
+from secrets import compare_digest
 from contextlib import asynccontextmanager
 
 # Windows 平台需要设置事件循环策略（支持 psycopg 异步）
@@ -13,6 +14,7 @@ if sys.platform == 'win32':
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from muye_multi_agent_sdk import ChannelInvokeRequest, ChannelInvokeResponse, ChannelTextMessage
 
 from core.orchestrator import AgentManager
 from config import ResourceManager, get_config
@@ -70,6 +72,35 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(chat_router)
+
+
+@app.post("/internal/v1/channels/invoke", response_model=ChannelInvokeResponse, include_in_schema=False)
+async def channel_invoke(request: ChannelInvokeRequest, raw_request: Request) -> ChannelInvokeResponse:
+    """执行 channels 服务提交的标准化文本请求，沿用绑定用户的授权。"""
+    token = get_config().catalog.channels_caller_token
+    authorization = raw_request.headers.get("authorization", "")
+    actual = authorization[7:].strip() if authorization.startswith("Bearer ") else ""
+    if not token or not compare_digest(actual, token):
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_ERROR", "message": "Channel caller 无效"})
+    try:
+        manager = await AgentManager.get_instance()
+        result = await manager.chat(
+            user_input=request.message.content,
+            user_id=request.user_id,
+            session_id=request.session_id,
+            files=None,
+            user_location=None,
+            enable_knowledge=True,
+            user_informations=None,
+            trusted_user_id=request.user_id,
+        )
+        content = result.get("messages", [])[-1].content if result.get("messages") else ""
+        if isinstance(content, str) and content.strip():
+            return ChannelInvokeResponse(status="success", trace_id=request.trace_id, message=ChannelTextMessage(content=content))
+        return ChannelInvokeResponse(status="error", trace_id=request.trace_id, error={"code": "INVALID_AGENT_RESPONSE", "message": "MainAgent 未返回文本", "recoverable": False})
+    except Exception:
+        logger.exception("Channel 调用 MainAgent 失败 [channel=%s trace_id=%s]", request.channel, request.trace_id)
+        return ChannelInvokeResponse(status="error", trace_id=request.trace_id, error={"code": "AGENT_UNAVAILABLE", "message": "Agent 调用失败", "recoverable": True})
 
 
 @app.get("/")

@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SDK_DIRECT_REFERENCE = (
     "muye-multi-agent-sdk @ "
     "git+https://github.com/muye-x/muye-multi-agent-sdk.git@"
-    "v2.0.0"
+    "v2.1.0"
 )
 
 
