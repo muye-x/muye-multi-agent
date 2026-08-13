@@ -12,6 +12,14 @@ server {
     ssl_certificate_key ${MUYE_GATEWAY_TLS_PRIVATE_KEY};
     client_max_body_size ${MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE};
     location = /gateway/health { default_type application/json; return 200 '{"status":"healthy"}'; }
+    location /api/v2/channels/ {
+        auth_request /_muye_session_auth;
+        auth_request_set $muye_user_id $upstream_http_x_muye_user_id;
+        proxy_pass ${MUYE_CHANNELS_URL}/api/v1/;
+        proxy_set_header Authorization "Bearer ${MUYE_CHANNELS_CALLER_TOKEN}";
+        proxy_set_header X-Muye-User-Id $muye_user_id;
+        proxy_set_header Host $host;
+    }
     location /api/v2/ {
         proxy_pass ${MUYE_CONTROL_BASE_URL}/api/v2/;
         proxy_set_header Host $host;

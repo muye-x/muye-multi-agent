@@ -22,13 +22,13 @@ def test_react_knowledge_template_declares_a_pinned_sdk_and_digest_only_base_ima
     assert manifest == {
         "template_id": "react-knowledge",
         "template_version": "1.0.2",
-        "sdk_version": "2.0.0",
-        "sdk_version_specifier": "==2.0.0",
+        "sdk_version": "2.1.0",
+        "sdk_version_specifier": "==2.1.0",
         "base_image_build_arg": "MUYE_AGENT_BASE_IMAGE",
         "api_profile": "internal",
     }
     assert (TEMPLATE_DIRECTORY / "requirements.txt.tmpl").read_text(encoding="utf-8") == (
-        "muye-multi-agent-sdk @ https://github.com/muye-x/muye-multi-agent-sdk/archive/refs/tags/v2.0.0.tar.gz\n"
+        "muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@main\n"
         "langchain==1.3.14\n"
         "httpx==0.28.1\n"
     )
@@ -99,7 +99,7 @@ def test_fixture_agent_has_no_scaffold_import_and_keeps_a_fixed_scope() -> None:
     assert '"value": "kb.product_handbook"' in agent_source
     assert descriptor["agent_id"] == "agent_fixture_knowledge"
     assert (FIXTURE_DIRECTORY / "requirements.txt").read_text(encoding="utf-8") == (
-        "muye-multi-agent-sdk @ https://github.com/muye-x/muye-multi-agent-sdk/archive/refs/tags/v2.0.0.tar.gz\n"
+        "muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@main\n"
         "langchain==1.3.14\n"
         "httpx==0.28.1\n"
     )

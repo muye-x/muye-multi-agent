@@ -117,6 +117,23 @@ services:
       resources:
         limits: { memory: 256M, cpus: "0.5" }
 
+  channels:
+    build: .
+    command: ["python", "muye-channels/main.py"]
+    env_file:
+      - path: ./muye-channels/.env
+        required: false
+    environment:
+      MUYE_CHANNELS_HOST: 0.0.0.0
+      MUYE_CHANNELS_MAIN_URL: http://agent-main:9860
+      MUYE_CHANNELS_DATABASE_URL: ${MUYE_CHANNELS_DATABASE_URL:-postgresql://muye:muye@postgres:5432/muye}
+    depends_on:
+      agent-main: { condition: service_started }
+      postgres: { condition: service_healthy }
+    networks: [internal]
+    expose: ["9890"]
+    profiles: ["channels"]
+
 networks:
   internal: { internal: true }
   public: {}
