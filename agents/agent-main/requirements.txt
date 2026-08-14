@@ -1,5 +1,5 @@
-# 主 Agent 运行时直接依赖 SDK main 分支，保证渠道协议与当前开发代码同步。
-muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@main
+# 主 Agent 运行时依赖 SDK v2.1.0 稳定版本。
+muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@v2.1.0
 
 # HTTP API 与配置
 fastapi>=0.115.0
