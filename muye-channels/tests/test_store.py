@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from main import CryptoBox
+from main import CryptoBox, _render_qr_svg
 
 
 def test_crypto_box_encrypts_provider_secrets_and_stable_ids() -> None:
@@ -17,3 +17,10 @@ def test_crypto_box_encrypts_provider_secrets_and_stable_ids() -> None:
     assert encrypted != b"private-token"
     assert crypto.decrypt(encrypted) == "private-token"
     assert crypto.stable_id("binding", "provider-message") == crypto.stable_id("binding", "provider-message")
+
+
+def test_render_qr_svg_returns_data_uri() -> None:
+    rendered = _render_qr_svg("https://example.test/wechat/qr")
+
+    assert rendered.startswith("data:image/svg+xml;base64,")
+    assert len(rendered) > len("data:image/svg+xml;base64,")
