@@ -79,7 +79,6 @@ services:
     depends_on:
       control: { condition: service_healthy }
       muye-llm: { condition: service_healthy }
-      muye-data: { condition: service_healthy }
     networks: [internal]
     expose: ["9860"]
     healthcheck:
@@ -117,7 +116,7 @@ services:
     environment:
       MUYE_DATA_HOST: 0.0.0.0
       MUYE_DATA_LLM_BASE_URL: http://muye-llm:9850
-      MUYE_DATA_AGENT_AUTH_ENABLED: "true"
+      MUYE_DATA_AGENT_AUTH_ENABLED: "false"
       MUYE_DATA_AGENT_CATALOG_PATH: /var/lib/muye/control/active-catalog.json
     volumes: [control-state:/var/lib/muye/control:ro]
     depends_on:
@@ -151,12 +150,12 @@ services:
       dashboard-api: { condition: service_healthy }
       agent-main: { condition: service_healthy }
     networks: [internal, public]
-    ports: ["80:80"]
+    ports: ["8080:80"]
     volumes:
       - ${MUYE_GATEWAY_TLS_CERTIFICATE_PATH:-/dev/null}:/etc/nginx/tls/tls.crt:ro
       - ${MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH:-/dev/null}:/etc/nginx/tls/tls.key:ro
     read_only: true
-    tmpfs: [/var/cache/nginx, /var/run]
+    tmpfs: [/var/cache/nginx, /var/run, /etc/nginx/templates, /etc/nginx/conf.d]
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/gateway/health"]
       interval: 15s
