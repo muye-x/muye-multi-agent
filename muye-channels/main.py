@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-import qrcode
+import qrcode as qrcode_lib
 import qrcode.image.svg
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI, HTTPException, Request
@@ -322,6 +322,14 @@ def _caller_user(request: Request, config: ChannelConfig) -> str:
     return user_id
 
 
+def _render_qr_svg(content: str) -> str:
+    """Render provider QR content as a self-contained SVG data URI."""
+    image = qrcode_lib.make(content, image_factory=qrcode.image.svg.SvgPathImage)
+    output = BytesIO()
+    image.save(output)
+    return "data:image/svg+xml;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+
+
 async def _poll_binding(store: ChannelStore, ilink: ILinkClient, agent: ChannelAgentClient, crypto: CryptoBox, binding: Binding) -> None:
     """读取一批文本，先落库去重，再以至多一次语义调用 Agent 和投递微信。"""
     messages, cursor = await ilink.updates(binding, await store.cursor(binding))
@@ -402,15 +410,11 @@ def create_app(config: ChannelConfig | None = None, *, client: httpx.AsyncClient
         return {"status": "active" if binding else "unbound"}
 
     @app.post("/api/v1/bindings/wechat/qrcode")
-    async def qrcode(_: QrCodeRequest, request: Request) -> dict[str, str]:
+    async def create_qrcode(_: QrCodeRequest, request: Request) -> dict[str, str]:
         user_id = _caller_user(request, resolved)
         token, content = await ilink.create_qr()
         session_id = await store.create_qr(user_id, token, content)
-        image = qrcode.make(content, image_factory=qrcode.image.svg.SvgPathImage)
-        output = BytesIO()
-        image.save(output)
-        qr_svg = "data:image/svg+xml;base64," + base64.b64encode(output.getvalue()).decode("ascii")
-        return {"session_id": session_id, "qr_svg": qr_svg, "status": "wait"}
+        return {"session_id": session_id, "qr_svg": _render_qr_svg(content), "status": "wait"}
 
     @app.get("/api/v1/bindings/wechat/qrcode/{session_id}")
     async def qrcode_status(session_id: str, request: Request) -> dict[str, str]:
