@@ -79,8 +79,8 @@ services:
     depends_on:
       control: { condition: service_healthy }
       muye-llm: { condition: service_healthy }
-    networks: [internal]
-    expose: ["9860"]
+    networks: [internal, public]
+    ports: ["9860:9860"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9860/health')"]
       interval: 15s

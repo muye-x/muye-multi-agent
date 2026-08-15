@@ -192,7 +192,16 @@ def build_sub_agent_tools(
                     raise SubAgentCallError("DEPENDENCY_UNAVAILABLE", "可信引用记录服务不可用")
                 for evidence in citations.values():
                     try:
-                        await citation_recorder(_descriptor, user_id, evidence)
+                        # 为每个用户生成唯一的 citation_id，避免跨用户冲突
+                        from tools.sub_agent.catalog import CitationEvidence
+                        unique_evidence = CitationEvidence(
+                            citation_id=f"{evidence.citation_id}_{user_id}",
+                            knowledge_version_id=evidence.knowledge_version_id,
+                            locator=evidence.locator,
+                            title=evidence.title,
+                            source=evidence.source,
+                        )
+                        await citation_recorder(_descriptor, user_id, unique_evidence)
                     except Exception as exc:
                         raise SubAgentCallError("DEPENDENCY_UNAVAILABLE", "可信引用记录失败") from exc
                     if writer is not None:
@@ -204,7 +213,7 @@ def build_sub_agent_tools(
                                 "blocks": [
                                     {
                                         "type": "citation",
-                                        "citation_id": evidence.citation_id,
+                                        "citation_id": unique_evidence.citation_id,
                                         "title": evidence.title,
                                         "source": evidence.source,
                                     }
