@@ -1,6 +1,55 @@
 {
-  "agents": [],
-  "catalog_checksum": "b74837f2133ee20c3b0021feb3fe39ca28067ab0a8639ad137ac147994305c9f",
-  "catalog_revision": "catalog-c794e0f2c991a4def908c963",
+  "agents": [
+    {
+      "agent_id": "agent_hotel_employee",
+      "agent_version": "0.1.0",
+      "api_profile": "internal",
+      "base_url": "http://agent-hotel-employee:8000",
+      "caller": "agent-main",
+      "capabilities_checksum": "aaf3a427dd50f93dad20415f1020e0b8697cb8eb611ea9c2324bca44824820a3",
+      "description": "根据muye大酒店员工手册回答制度问题，并提供来源引用。",
+      "descriptor_checksum": "361adebce6dbf65d32e06fa015e6db59b10b149a1709334bc18064ec416489c8",
+      "display_name": "酒店员工手册助手",
+      "image_digest": "sha256:6fb2c56a485ed0b53cb77340c3ebe4240da6c51e5ef122f3e9e9a30c8044f74c",
+      "internal_protocol_version": "muye-agent-internal/3.0",
+      "max_concurrency": 2,
+      "resource_bindings": [
+        {
+          "resource_id": "kb.hotel_employee",
+          "skill_ref": "retrieval/hotel-employee@1"
+        }
+      ],
+      "service_name": "agent-hotel-employee",
+      "source_tree_checksum": "f1ad72b839e6b0128e5a9d916b48bcfbe3a3599070d283aeaead38f3f522242b",
+      "status": "STARTING",
+      "supported_intents": [
+        "查询入职要求",
+        "查询转正流程",
+        "查询晋升规则",
+        "查询辞退情形",
+        "查询离职工资发放",
+        "查询薪资调整依据",
+        "查询排班与调班规定",
+        "查询加班管理",
+        "查询请假流程",
+        "查询事假限制",
+        "查询工伤假规定",
+        "查询产假规定",
+        "查询休假工资",
+        "查询客用设施使用规定",
+        "查询吸烟规定",
+        "查询保密范围",
+        "查询衣柜管理",
+        "查询制服管理",
+        "查询公告栏使用",
+        "查询灭火器适用范围"
+      ],
+      "target_type": "sub_agent",
+      "timeout_seconds": 30,
+      "tool_name": "hotel_employee_agent"
+    }
+  ],
+  "catalog_checksum": "ef3d14ab7f86e54089d77e4f29999612ebfc18fb4a3699006908cfb925d0ce63",
+  "catalog_revision": "catalog-69e6cc3eac7ba339ed44518a",
   "schema_version": "muye.ai/agent-catalog-snapshot/v1"
 }

@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent_hotel_employee",
+  "agent_version": "0.1.0",
+  "base_image_digest": "sha256:8a11602e19c20555e7ab7621ee550e8a96995723c8d3b94229969f4bc3854949",
+  "build_record_id": "build_20260814t094118z_6fb2c56a485e",
+  "builder_version": "2.0.0",
+  "built_at": "2026-08-14T09:41:18Z",
+  "descriptor_checksum": "361adebce6dbf65d32e06fa015e6db59b10b149a1709334bc18064ec416489c8",
+  "image_digest": "sha256:6fb2c56a485ed0b53cb77340c3ebe4240da6c51e5ef122f3e9e9a30c8044f74c",
+  "sbom_ref": "config/generated/build-artifacts/build_20260814t094118z_6fb2c56a485e/sbom.json",
+  "schema_version": "muye.ai/agent-build-record/v1",
+  "sdk_version": "2.1.0",
+  "source_tree_checksum": "f1ad72b839e6b0128e5a9d916b48bcfbe3a3599070d283aeaead38f3f522242b",
+  "test_report_ref": "config/generated/build-artifacts/build_20260814t094118z_6fb2c56a485e/test-report.json"
+}

@@ -98,7 +98,7 @@ services:
     environment:
       MUYE_LLM_HOST: 0.0.0.0
     networks: [internal]
-    expose: ["9850"]
+    ports: ["9850:9850"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9850/health')"]
       interval: 15s
@@ -118,11 +118,17 @@ services:
       MUYE_DATA_LLM_BASE_URL: http://muye-llm:9850
       MUYE_DATA_AGENT_AUTH_ENABLED: "false"
       MUYE_DATA_AGENT_CATALOG_PATH: /var/lib/muye/control/active-catalog.json
-    volumes: [control-state:/var/lib/muye/control:ro]
+      MUYE_DATA_RESOURCE_SNAPSHOT_PATH: /var/lib/muye/config/resource-snapshot.json
+      MUYE_DATA_MILVUS_URI: http://milvus-milvus-1:19530
+    volumes:
+      - control-state:/var/lib/muye/control:ro
+      - ./config/generated:/var/lib/muye/config:ro
+    networks:
+      - internal
+      - milvus_default
     depends_on:
       muye-llm: { condition: service_healthy }
       control: { condition: service_healthy }
-    networks: [internal]
     expose: ["9840"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9840/health')"]
@@ -194,6 +200,7 @@ services:
 networks:
   internal: { internal: true }
   public: {}
+  milvus_default: { external: true }
 
 volumes:
   postgres-data: {}
