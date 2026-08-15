@@ -1,0 +1,3 @@
+muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@main
+langchain==1.3.14
+httpx==0.28.1

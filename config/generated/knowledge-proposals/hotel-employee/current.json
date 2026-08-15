@@ -1,0 +1,30 @@
+{
+  "chunking": {
+    "max_characters": 1200,
+    "min_characters": 80,
+    "overlap_characters": 120
+  },
+  "document_set_checksum": "b75b880abfd6a3ac1cc90cd4e2f77a5c24e230325394b7fe48a57f7d2f06754d",
+  "embedding_alias": "text-embedding-v3",
+  "embedding_dimensions": 1024,
+  "knowledge_id": "kb.hotel_employee",
+  "knowledge_version_id": "kv_c6d8292a24bec8ba",
+  "metadata_fields": [
+    {
+      "filterable": false,
+      "name": "title",
+      "returnable": true,
+      "type": "string"
+    },
+    {
+      "filterable": true,
+      "name": "source_file_id",
+      "returnable": false,
+      "type": "string"
+    }
+  ],
+  "parser_profile": "docling-default-v1",
+  "proposal_checksum": "ac2ff8a162cb38062e3064def4a9a341277f11eba8b940f3c51797d505d9d740",
+  "proposal_revision": "proposal/kv_c6d8292a24bec8ba",
+  "schema_version": "muye.ai/schema-proposal/v1"
+}

@@ -548,7 +548,7 @@ function formatDebugPayload(event: StreamEvent): string {
 
 async function checkHealth(): Promise<void> {
   try {
-    const response = await fetch("/agentMain/health");
+    const response = await fetch("/gateway/health");
     connected.value = response.ok;
   } catch {
     connected.value = false;
