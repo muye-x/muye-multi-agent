@@ -10,6 +10,6 @@
   "sbom_ref": "config/generated/build-artifacts/build_20260814t094118z_6fb2c56a485e/sbom.json",
   "schema_version": "muye.ai/agent-build-record/v1",
   "sdk_version": "2.1.0",
-  "source_tree_checksum": "f1ad72b839e6b0128e5a9d916b48bcfbe3a3599070d283aeaead38f3f522242b",
+  "source_tree_checksum": "44f4b777b73e7bea89fc869f5153afed66d84b764b02883a35c25d45b0c60cca",
   "test_report_ref": "config/generated/build-artifacts/build_20260814t094118z_6fb2c56a485e/test-report.json"
 }

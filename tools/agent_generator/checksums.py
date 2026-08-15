@@ -10,6 +10,7 @@ from typing import Mapping
 
 PROVENANCE_FILE_NAME = ".muye-generation.json"
 _RUNTIME_ARTIFACT_DIRECTORIES = {"__pycache__", ".pytest_cache"}
+_ENV_FILE_PATTERNS = {".env", ".env.local", ".env.production"}
 
 
 def canonical_checksum(value: object) -> str:
@@ -19,11 +20,13 @@ def canonical_checksum(value: object) -> str:
 
 
 def source_tree_checksum(directory: Path) -> str:
-    """计算目录的稳定源码树 checksum，并排除含生成时间的 provenance。"""
+    """计算目录的稳定源码树 checksum，并排除含生成时间的 provenance 和环境变量文件。"""
     files = _regular_files(directory)
     digest = sha256()
     for relative_path, path in files.items():
         if relative_path == PROVENANCE_FILE_NAME:
+            continue
+        if _is_env_file(relative_path):
             continue
         digest.update(relative_path.encode("utf-8"))
         digest.update(b"\0")
@@ -32,11 +35,22 @@ def source_tree_checksum(directory: Path) -> str:
     return digest.hexdigest()
 
 
+def _is_env_file(relative_path: str) -> bool:
+    """检查文件是否为环境变量配置文件（排除 .env.example 模板文件）。"""
+    parts = relative_path.split("/")
+    filename = parts[-1]
+    if filename.endswith(".example"):
+        return False
+    return filename in _ENV_FILE_PATTERNS or filename.startswith(".env.")
+
+
 def read_source_tree(directory: Path) -> dict[str, str]:
     """读取生成目录内的 UTF-8 文件，供只读 diff 使用。"""
     tree: dict[str, str] = {}
     for relative_path, path in _regular_files(directory).items():
         if relative_path == PROVENANCE_FILE_NAME:
+            continue
+        if _is_env_file(relative_path):
             continue
         try:
             tree[relative_path] = path.read_text(encoding="utf-8")
