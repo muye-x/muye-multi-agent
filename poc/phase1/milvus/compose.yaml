@@ -26,7 +26,7 @@ services:
       - etcd
       - minio
     ports:
-      - "0.0.0.0:19530:19530"
+      - "127.0.0.1:19530:19530"
     volumes:
       - phase1-milvus:/var/lib/milvus
 
