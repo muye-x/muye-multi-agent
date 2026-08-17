@@ -11,6 +11,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/chat', component: () => import('./views/ChatView.vue') },
   { path: '/agents', component: () => import('./views/AgentsView.vue') },
   { path: '/grants', component: () => import('./views/GrantsView.vue') },
+  { path: '/channels/wechat', component: () => import('./views/WeChatBindingView.vue') },
 ]
 const router = createRouter({ history: createWebHistory(), routes })
 router.beforeEach((to) => (localDev || to.path === '/login' || sessionStorage.getItem('muye_access_token') ? true : '/login'))

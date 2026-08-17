@@ -1,0 +1,9 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27
+pydantic>=2.0
+cryptography>=43.0
+qrcode>=8.0
+psycopg[binary,pool]>=3.2.0
+muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@main
+pytest>=8.0

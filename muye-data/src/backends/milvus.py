@@ -177,7 +177,7 @@ class MilvusBackend:
             raise BackendUnavailableError() from exc
         except Exception as exc:
             error_type = type(exc).__name__
-            logger.warning("Milvus search failed error_type=%s", error_type)
+            logger.warning("Milvus search failed error_type=%s error=%s", error_type, exc)
             if self._is_transient_error(exc):
                 raise BackendUnavailableError() from exc
             raise BackendProtocolError() from exc

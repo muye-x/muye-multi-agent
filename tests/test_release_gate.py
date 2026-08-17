@@ -22,7 +22,7 @@ def _evidence() -> dict[str, object]:
         "schema_version": "muye.ai/release-evidence/v1",
         "release_version": "2.0.0-alpha.1",
         "stage": "alpha",
-        "sdk_version": "2.0.0",
+        "sdk_version": "2.1.0",
         "template": {"id": "react-knowledge", "version": "1.0.2", "source_tree_checksum": canonical_checksum(read_source_tree(template_root))},
         "schema_checksums": {schema.name: sha256(schema.read_bytes()).hexdigest()},
         "images": {"agent-main": "registry.example/muye/agent-main@sha256:" + "a" * 64},

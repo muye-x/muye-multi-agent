@@ -9,12 +9,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SDK_DIRECT_REFERENCE = (
     "muye-multi-agent-sdk @ "
     "git+https://github.com/muye-x/muye-multi-agent-sdk.git@"
-    "v2.0.0"
+    "main"
 )
 
 
-def test_requirements_use_the_pinned_public_sdk_release() -> None:
-    """所有保留的服务 requirements 均应使用同一个公开 SDK 发布 tag。"""
+def test_requirements_use_the_sdk_main_branch() -> None:
+    """所有服务 requirements 均应使用 SDK main 分支。"""
     paths = (
         PROJECT_ROOT / "requirements.txt",
         PROJECT_ROOT / "agents" / "agent-main" / "requirements.txt",

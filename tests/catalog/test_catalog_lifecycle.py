@@ -67,7 +67,7 @@ def _write_build_record(root: Path, descriptor: AgentDescriptorV1) -> AgentBuild
         agent_version=descriptor.version,
         descriptor_checksum=canonical_checksum(descriptor.model_dump(mode="json")),
         source_tree_checksum=source_tree_checksum(directory),
-        sdk_version="2.0.0",
+        sdk_version="2.1.0",
         base_image_digest=f"sha256:{'a' * 64}",
         image_digest=f"sha256:{'b' * 64}",
         sbom_ref="artifacts/sbom.json",

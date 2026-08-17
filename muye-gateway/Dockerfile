@@ -6,5 +6,8 @@ COPY web ./
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY muye-gateway/nginx/conf.d/muye-gateway.conf.template /etc/nginx/templates/default.conf.template
+COPY muye-gateway/nginx/conf.d/muye-gateway.conf.template /etc/nginx/muye-gateway/https.conf.template
+COPY muye-gateway/nginx/conf.d/muye-gateway.http.conf.template /etc/nginx/muye-gateway/http.conf.template
+COPY muye-gateway/docker-entrypoint.d/10-select-gateway-mode.sh /docker-entrypoint.d/10-select-gateway-mode.sh
+RUN chmod +x /docker-entrypoint.d/10-select-gateway-mode.sh
 COPY --from=web-build /web/dist /usr/share/nginx/html

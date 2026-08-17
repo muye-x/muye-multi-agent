@@ -28,8 +28,8 @@ def test_core_compose_mounts_tls_and_provides_agent_dependencies() -> None:
     data = compose["services"]["muye-data"]
     agent_main = compose["services"]["agent-main"]
 
-    assert "${MUYE_GATEWAY_TLS_CERTIFICATE_PATH:?set MUYE_GATEWAY_TLS_CERTIFICATE_PATH}:/etc/nginx/tls/tls.crt:ro" in gateway["volumes"]
-    assert "${MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH:?set MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH}:/etc/nginx/tls/tls.key:ro" in gateway["volumes"]
+    assert "${MUYE_GATEWAY_TLS_CERTIFICATE_PATH:-/dev/null}:/etc/nginx/tls/tls.crt:ro" in gateway["volumes"]
+    assert "${MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH:-/dev/null}:/etc/nginx/tls/tls.key:ro" in gateway["volumes"]
     assert data["environment"]["MUYE_DATA_LLM_BASE_URL"] == "http://muye-llm:9850"
     assert agent_main["environment"]["MUYE_AGENT_HOST"] == "0.0.0.0"
     assert agent_main["environment"]["MUYE_SDK_DATA_BASE_URL"] == "http://muye-data:9840"
@@ -59,6 +59,16 @@ def test_compose_management_commands_allow_missing_module_environment_files() ->
     assert "up) shift; compose_up up -d" in source
     assert "down) shift; compose_manage down" in source
     assert "MUYE_GATEWAY_TLS_CERTIFICATE_PATH=/dev/null" in source
+
+
+def test_gateway_supports_explicit_http_mode_without_tls_redirect() -> None:
+    source = (
+        PROJECT_ROOT / "muye-gateway" / "nginx" / "conf.d" / "muye-gateway.http.conf.template"
+    ).read_text(encoding="utf-8")
+
+    assert "listen 80;" in source
+    assert "return 301 https://" not in source
+    assert "X-Forwarded-Proto http" in source
 
 
 def test_generated_agent_compose_uses_internal_llm_and_data_urls() -> None:

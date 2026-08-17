@@ -105,6 +105,19 @@ SERVICES: list[dict] = [
         "log_label": "GATEWAY",
         "log_color": "\033[94m",
     },
+    {
+        "id": 7,
+        "name": "muye-channels · 第三方通道服务",
+        "cwd": "muye-channels",
+        "cmd": [PYTHON_BIN, "main.py"],
+        "env_file": "muye-channels/.env",
+        "host_env": "MUYE_CHANNELS_HOST",
+        "port_env": "MUYE_CHANNELS_PORT",
+        "default_port": 9890,
+        "log_label": "CHANNELS",
+        "log_color": "\033[95m",
+        "enabled_env": "MUYE_CHANNELS_ENABLED",
+    },
 ]
 
 # ─── 全局进程跟踪 ──────────────────────────────────────────────────────────────

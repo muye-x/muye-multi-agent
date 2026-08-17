@@ -243,9 +243,9 @@ class PostgresIdentityStore(IdentityStore):
     def allowed_agent_ids(self, user_id: str) -> frozenset[str]:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
-                """SELECT grant.agent_id FROM user_agent_grants grant
-                   JOIN control_users user_record ON user_record.user_id = grant.user_id
-                   WHERE grant.user_id = %s AND user_record.active""",
+                """SELECT g.agent_id FROM user_agent_grants g
+                   JOIN control_users user_record ON user_record.user_id = g.user_id
+                   WHERE g.user_id = %s AND user_record.active""",
                 (user_id,),
             )
             return frozenset(row[0] for row in cursor.fetchall())

@@ -1,0 +1,9 @@
+{
+  "approved_at": "2026-08-14T09:36:07Z",
+  "approved_by": "admin",
+  "checksum": "4ee771dae22fb7c58ff7bfbd2b1abc5108509090d63a852498db521fda5cdb0b",
+  "revision": "profile/hotel-employee@1",
+  "schema_version": "muye.ai/generation-approval/v1",
+  "subject_slug": "hotel-employee",
+  "subject_type": "profile"
+}

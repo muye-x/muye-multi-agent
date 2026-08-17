@@ -1,0 +1,47 @@
+server {
+    listen 80;
+    server_name ${MUYE_GATEWAY_SERVER_NAME};
+    client_max_body_size ${MUYE_GATEWAY_CLIENT_MAX_BODY_SIZE};
+    resolver 127.0.0.11 valid=10s;
+    location = /gateway/health { default_type application/json; return 200 '{"status":"healthy"}'; }
+    location /api/v2/channels/ {
+        auth_request /_muye_session_auth;
+        auth_request_set $muye_user_id $upstream_http_x_muye_user_id;
+        set $channels_upstream ${MUYE_CHANNELS_URL};
+        proxy_pass $channels_upstream/api/v1/;
+        proxy_set_header Authorization "Bearer ${MUYE_CHANNELS_CALLER_TOKEN}";
+        proxy_set_header X-Muye-User-Id $muye_user_id;
+        proxy_set_header Host $host;
+    }
+    location /api/v2/ {
+        proxy_pass ${MUYE_CONTROL_BASE_URL}/api/v2/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location /agentMain/ {
+        auth_request /_muye_session_auth;
+        auth_request_set $muye_user_id $upstream_http_x_muye_user_id;
+        proxy_pass ${MUYE_AGENT_MAIN_URL}/;
+        proxy_set_header Authorization "Bearer ${MUYE_MAIN_CALLER_TOKEN}";
+        proxy_set_header X-Muye-User-Id $muye_user_id;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Host $host;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout ${MUYE_GATEWAY_PROXY_READ_TIMEOUT};
+        proxy_send_timeout ${MUYE_GATEWAY_PROXY_SEND_TIMEOUT};
+    }
+    location = /_muye_session_auth {
+        internal;
+        proxy_pass ${MUYE_DASHBOARD_API_URL}/internal/auth;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Authorization $http_authorization;
+    }
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;
+    }
+}

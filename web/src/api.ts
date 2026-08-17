@@ -39,4 +39,9 @@ export const api = {
   users: () => request<{ users: User[] }>('/users'),
   grants: (userId: string) => request<{ agent_ids: string[] }>(`/users/${encodeURIComponent(userId)}/agent-grants`),
   replaceGrants: (userId: string, agentIds: string[]) => request(`/users/${encodeURIComponent(userId)}/agent-grants`, { method: 'PUT', body: JSON.stringify({ agent_ids: agentIds }) }),
+  wechatStatus: () => request<{ status: 'active' | 'unbound' }>('/channels/bindings/wechat'),
+  wechatQrCode: () => request<{ session_id: string; qr_svg: string; status: string }>('/channels/bindings/wechat/qrcode', { method: 'POST', body: '{}' }),
+  wechatQrStatus: (sessionId: string) => request<{ status: string }>(`/channels/bindings/wechat/qrcode/${encodeURIComponent(sessionId)}`),
+  wechatVerify: (sessionId: string, verifyCode: string) => request<{ status: string }>(`/channels/bindings/wechat/qrcode/${encodeURIComponent(sessionId)}/verify`, { method: 'POST', body: JSON.stringify({ verify_code: verifyCode }) }),
+  wechatUnbind: () => request<void>('/channels/bindings/wechat', { method: 'DELETE' }),
 }
