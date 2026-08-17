@@ -1,0 +1,82 @@
+{
+  "resources": {
+    "kb.hotel_employee": {
+      "collection_plan_checksum": "338dd06be09fb9f22af1b4a2857fa8aa93d4649739a88b58206ae8c0275b6228",
+      "connection": "milvus_default",
+      "default_pipeline": "hybrid",
+      "default_return_fields": [
+        "title",
+        "source",
+        "citation_id",
+        "source_locator",
+        "source_locators",
+        "knowledge_version_id"
+      ],
+      "embedding_alias": "text-embedding-v3",
+      "embedding_dimensions": 1024,
+      "fields": {
+        "content": "content",
+        "exposed_fields": {
+          "citation_id": "citation_id",
+          "knowledge_version_id": "knowledge_version_id",
+          "source": "source_file_id",
+          "source_file_id": "source_file_id",
+          "source_locator": "source_locators",
+          "source_locators": "source_locators",
+          "title": "title"
+        },
+        "filterable_fields": {
+          "knowledge_version_id": "knowledge_version_id"
+        },
+        "id": "chunk_id",
+        "keyword": "sparse_embedding",
+        "vector": "embedding"
+      },
+      "knowledge_id": "kb.hotel_employee",
+      "knowledge_version_id": "kv_c6d8292a24bec8ba",
+      "pipelines": {
+        "dense": {
+          "candidate_k": 50,
+          "dense_candidate_k": null,
+          "dense_weight": null,
+          "keyword_candidate_k": null,
+          "keyword_weight": null,
+          "rank_constant": null,
+          "rerank_model": null,
+          "rerank_required": false,
+          "type": "dense"
+        },
+        "hybrid": {
+          "candidate_k": null,
+          "dense_candidate_k": 50,
+          "dense_weight": 1.0,
+          "keyword_candidate_k": 50,
+          "keyword_weight": 1.0,
+          "rank_constant": 60,
+          "rerank_model": null,
+          "rerank_required": false,
+          "type": "hybrid"
+        },
+        "keyword": {
+          "candidate_k": 50,
+          "dense_candidate_k": null,
+          "dense_weight": null,
+          "keyword_candidate_k": null,
+          "keyword_weight": null,
+          "rank_constant": null,
+          "rerank_model": null,
+          "rerank_required": false,
+          "type": "keyword"
+        }
+      },
+      "resource_checksum": "74a0bff49a89758298a46e9b57b087cb57ccfc663518a18c2c94acf6f6278739",
+      "resource_id": "kb.hotel_employee",
+      "resource_revision": "resource/kv_c6d8292a24bec8ba",
+      "schema_version": "muye.ai/knowledge-resource-manifest/v1",
+      "target": "kb_hotel_employee_c6d8292a24bec8ba"
+    }
+  },
+  "schema_version": "muye.ai/resource-snapshot/v1",
+  "snapshot_checksum": "dcfe466db3c12dfa952f1effb11c7ab77c3d06910f48438a68c585a0755e0abf",
+  "snapshot_revision": "snapshot/kv_c6d8292a24bec8ba"
+}

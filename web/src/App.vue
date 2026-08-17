@@ -15,14 +15,11 @@ async function logout() {
 <template>
   <main :class="{ 'local-dev-app': localDev }">
     <nav v-if="$route.path !== '/login' && !localDev">
-      <template>
-        <strong>Muye Control</strong><RouterLink to="/">状态</RouterLink
-        ><RouterLink to="/chat">对话</RouterLink
-        ><RouterLink to="/agents">Agents</RouterLink
-        ><RouterLink to="/grants">授权</RouterLink
-        ><RouterLink to="/channels/wechat">微信</RouterLink
-        ><button title="退出登录" aria-label="退出登录" @click="logout">退出</button>
-      </template>
+      <strong>Muye Control</strong><RouterLink to="/">状态</RouterLink
+      ><RouterLink to="/chat">对话</RouterLink
+      ><RouterLink to="/agents">Agents</RouterLink
+      ><RouterLink to="/grants">授权</RouterLink
+      ><button title="退出登录" aria-label="退出登录" @click="logout">退出</button>
     </nav>
     <RouterView />
   </main>

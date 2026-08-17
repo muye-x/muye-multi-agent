@@ -31,3 +31,18 @@ htmlcov
 *.sqlite3
 logs
 web/node_modules
+
+# Non-runtime directories (tests, docs, PoC, tools development files)
+tests/
+docs/
+poc/
+tools/
+.github/
+.agents/
+.codex/
+.cursor/
+.claude/
+*.md
+!README.md
+config/runtime/
+config/generated/

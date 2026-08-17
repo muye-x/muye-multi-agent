@@ -1,0 +1,11 @@
+{
+  "agent_id": "agent_hotel_employee",
+  "checks": [
+    "compileall",
+    "pytest"
+  ],
+  "descriptor_checksum": "361adebce6dbf65d32e06fa015e6db59b10b149a1709334bc18064ec416489c8",
+  "schema_version": "muye.ai/agent-build-test-report/v1",
+  "source_tree_checksum": "f1ad72b839e6b0128e5a9d916b48bcfbe3a3599070d283aeaead38f3f522242b",
+  "status": "passed"
+}

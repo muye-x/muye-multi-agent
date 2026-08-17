@@ -1,0 +1,7 @@
+services:
+  muye-llm:
+    networks:
+      - internal
+      - public
+    ports:
+      - "9850:9850"

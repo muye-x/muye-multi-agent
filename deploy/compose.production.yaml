@@ -1,0 +1,185 @@
+# Muye Multi-Agent Scaffold 生产环境 Compose
+# 用法：docker compose -f deploy/compose.production.yaml up -d
+# 前置条件：
+#   1. 复制 .env.production 为 .env 并填写实际值
+#   2. 启动 Milvus：docker compose -f poc/phase1/milvus/compose.yaml up -d
+#   3. 初始化数据库：docker exec -i muye-postgres-1 psql -U muye -d muye < deploy/init-db.sql
+
+name: muye
+
+services:
+  # ============================================
+  # 基础设施
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    env_file: .env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ============================================
+  # 核心服务
+  # ============================================
+  control:
+    image: jimmydou/muye-muye-control:latest
+    command: ["python", "-m", "control_server.main"]
+    env_file: .env
+    environment:
+      MUYE_CONTROL_HOST: 0.0.0.0
+      MUYE_CONTROL_STATE_ROOT: /var/lib/muye/control
+    volumes: [control-state:/var/lib/muye/control]
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [internal]
+    expose: ["9880"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9880/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  dashboard-api:
+    image: jimmydou/muye-muye-dashboard-api:latest
+    command: ["python", "muye-gateway/dashboard_main.py"]
+    env_file: .env
+    environment:
+      MUYE_DASHBOARD_HOST: 0.0.0.0
+      MUYE_CONTROL_BASE_URL: http://control:9880
+    depends_on: { control: { condition: service_healthy } }
+    networks: [internal]
+    expose: ["9870"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9870/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  muye-llm:
+    image: jimmydou/muye-muye-llm:latest
+    command: ["python", "muye-llm/main.py"]
+    env_file: .env
+    environment:
+      MUYE_LLM_HOST: 0.0.0.0
+    networks: [internal]
+    expose: ["9850"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9850/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  muye-data:
+    image: jimmydou/muye-muye-data:latest
+    command: ["python", "muye-data/main.py"]
+    env_file: .env
+    environment:
+      MUYE_DATA_HOST: 0.0.0.0
+      MUYE_DATA_LLM_BASE_URL: http://muye-llm:9850
+      MUYE_DATA_AGENT_AUTH_ENABLED: "false"
+      MUYE_DATA_AGENT_CATALOG_PATH: /var/lib/muye/control/active-catalog.json
+      MUYE_DATA_RESOURCE_SNAPSHOT_PATH: /var/lib/muye/config/resource-snapshot.json
+      MUYE_DATA_MILVUS_URI: http://milvus-milvus-1:19530
+    volumes:
+      - control-state:/var/lib/muye/control:ro
+      - ./config/generated:/var/lib/muye/config:ro
+    networks: [internal, milvus_default]
+    depends_on:
+      muye-llm: { condition: service_healthy }
+      control: { condition: service_healthy }
+    expose: ["9840"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9840/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  agent-main:
+    image: jimmydou/muye-muye-agent-main:latest
+    command: ["python", "main.py"]
+    env_file: .env
+    environment:
+      MUYE_AGENT_HOST: 0.0.0.0
+      MUYE_CONTROL_BASE_URL: http://control:9880
+      MUYE_LLM_BASE_URL: http://muye-llm:9850
+      MUYE_SDK_DATA_BASE_URL: http://muye-data:9840
+    depends_on:
+      control: { condition: service_healthy }
+      muye-llm: { condition: service_healthy }
+    networks: [internal, public]
+    ports: ["9860:9860"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9860/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ============================================
+  # 子 Agent
+  # ============================================
+  agent-hotel-employee:
+    image: jimmydou/muye-agent-hotel-employee:0.1.0
+    env_file: .env
+    environment:
+      MUYE_LLM_BASE_URL: http://muye-llm:9850
+      MUYE_SDK_DATA_BASE_URL: http://muye-data:9840
+      MUYE_SDK_API_PROFILES: internal
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ============================================
+  # Gateway（对外入口）
+  # ============================================
+  gateway:
+    image: jimmydou/muye-muye-gateway:latest
+    env_file: .env
+    environment:
+      MUYE_GATEWAY_MODE: ${MUYE_GATEWAY_MODE:-http}
+      MUYE_AGENT_MAIN_URL: http://agent-main:9860
+      MUYE_DASHBOARD_API_URL: http://dashboard-api:9870
+      MUYE_CONTROL_BASE_URL: http://control:9880
+    depends_on:
+      dashboard-api: { condition: service_healthy }
+      agent-main: { condition: service_healthy }
+    networks: [internal, public]
+    ports: ["8080:80"]
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /etc/nginx/templates, /etc/nginx/conf.d]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/gateway/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  internal: { internal: true }
+  public: {}
+  milvus_default: { external: true }
+
+volumes:
+  postgres-data: {}
+  control-state: {}

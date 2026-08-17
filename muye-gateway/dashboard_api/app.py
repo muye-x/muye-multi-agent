@@ -220,6 +220,7 @@ def create_app(
         user_id = payload.get("user_id") if isinstance(payload, dict) else None
         if not isinstance(user_id, str) or not user_id:
             raise HTTPException(status_code=503, detail="会话认证响应无效")
+        response.status_code = 200
         response.headers["X-Muye-User-Id"] = user_id
         return response
 

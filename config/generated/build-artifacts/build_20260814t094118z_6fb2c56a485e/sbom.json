@@ -1,0 +1,10 @@
+{
+  "agent_id": "agent_hotel_employee",
+  "image_digest": "sha256:6fb2c56a485ed0b53cb77340c3ebe4240da6c51e5ef122f3e9e9a30c8044f74c",
+  "requirements": [
+    "muye-multi-agent-sdk @ git+https://github.com/muye-x/muye-multi-agent-sdk.git@main",
+    "langchain==1.3.14",
+    "httpx==0.28.1"
+  ],
+  "schema_version": "muye.ai/agent-build-sbom/v1"
+}

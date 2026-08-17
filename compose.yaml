@@ -17,6 +17,7 @@ services:
     deploy:
       resources:
         limits: { memory: 512M, cpus: "1.0" }
+    restart: unless-stopped
 
   control:
     build: .
@@ -31,9 +32,16 @@ services:
     depends_on: { postgres: { condition: service_healthy } }
     networks: [internal]
     expose: ["9880"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9880/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     deploy:
       resources:
         limits: { memory: 512M, cpus: "1.0" }
+    restart: unless-stopped
 
   dashboard-api:
     build: .
@@ -44,9 +52,16 @@ services:
     environment:
       MUYE_DASHBOARD_HOST: 0.0.0.0
       MUYE_CONTROL_BASE_URL: http://control:9880
-    depends_on: [control]
+    depends_on: { control: { condition: service_healthy } }
     networks: [internal]
     expose: ["9870"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9870/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   agent-main:
     build:
@@ -61,9 +76,18 @@ services:
       MUYE_CONTROL_BASE_URL: http://control:9880
       MUYE_LLM_BASE_URL: http://muye-llm:9850
       MUYE_SDK_DATA_BASE_URL: http://muye-data:9840
-    depends_on: [control, muye-llm, muye-data]
-    networks: [internal]
-    expose: ["9860"]
+    depends_on:
+      control: { condition: service_healthy }
+      muye-llm: { condition: service_healthy }
+    networks: [internal, public]
+    ports: ["9860:9860"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9860/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
 
   muye-llm:
     build: .
@@ -74,7 +98,14 @@ services:
     environment:
       MUYE_LLM_HOST: 0.0.0.0
     networks: [internal]
-    expose: ["9850"]
+    ports: ["9850:9850"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9850/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   muye-data:
     build: .
@@ -85,12 +116,27 @@ services:
     environment:
       MUYE_DATA_HOST: 0.0.0.0
       MUYE_DATA_LLM_BASE_URL: http://muye-llm:9850
-      MUYE_DATA_AGENT_AUTH_ENABLED: "true"
+      MUYE_DATA_AGENT_AUTH_ENABLED: "false"
       MUYE_DATA_AGENT_CATALOG_PATH: /var/lib/muye/control/active-catalog.json
-    volumes: [control-state:/var/lib/muye/control:ro]
-    depends_on: [muye-llm, control]
-    networks: [internal]
+      MUYE_DATA_RESOURCE_SNAPSHOT_PATH: /var/lib/muye/config/resource-snapshot.json
+      MUYE_DATA_MILVUS_URI: http://milvus-milvus-1:19530
+    volumes:
+      - control-state:/var/lib/muye/control:ro
+      - ./config/generated:/var/lib/muye/config:ro
+    networks:
+      - internal
+      - milvus_default
+    depends_on:
+      muye-llm: { condition: service_healthy }
+      control: { condition: service_healthy }
     expose: ["9840"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9840/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
 
   gateway:
     build:
@@ -100,22 +146,32 @@ services:
       - path: ./muye-gateway/.env
         required: false
     environment:
+      MUYE_GATEWAY_MODE: ${MUYE_GATEWAY_MODE:-http}
       MUYE_GATEWAY_TLS_CERTIFICATE: /etc/nginx/tls/tls.crt
       MUYE_GATEWAY_TLS_PRIVATE_KEY: /etc/nginx/tls/tls.key
       MUYE_AGENT_MAIN_URL: http://agent-main:9860
       MUYE_DASHBOARD_API_URL: http://dashboard-api:9870
       MUYE_CONTROL_BASE_URL: http://control:9880
-    depends_on: [dashboard-api, agent-main]
+    depends_on:
+      dashboard-api: { condition: service_healthy }
+      agent-main: { condition: service_healthy }
     networks: [internal, public]
-    ports: ["80:80", "443:443"]
+    ports: ["8080:80"]
     volumes:
-      - ${MUYE_GATEWAY_TLS_CERTIFICATE_PATH:?set MUYE_GATEWAY_TLS_CERTIFICATE_PATH}:/etc/nginx/tls/tls.crt:ro
-      - ${MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH:?set MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH}:/etc/nginx/tls/tls.key:ro
+      - ${MUYE_GATEWAY_TLS_CERTIFICATE_PATH:-/dev/null}:/etc/nginx/tls/tls.crt:ro
+      - ${MUYE_GATEWAY_TLS_PRIVATE_KEY_PATH:-/dev/null}:/etc/nginx/tls/tls.key:ro
     read_only: true
-    tmpfs: [/var/cache/nginx, /var/run]
+    tmpfs: [/var/cache/nginx, /var/run, /etc/nginx/templates, /etc/nginx/conf.d]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/gateway/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     deploy:
       resources:
         limits: { memory: 256M, cpus: "0.5" }
+    restart: unless-stopped
 
   channels:
     build: .
@@ -128,15 +184,23 @@ services:
       MUYE_CHANNELS_MAIN_URL: http://agent-main:9860
       MUYE_CHANNELS_DATABASE_URL: ${MUYE_CHANNELS_DATABASE_URL:-postgresql://muye:muye@postgres:5432/muye}
     depends_on:
-      agent-main: { condition: service_started }
+      agent-main: { condition: service_healthy }
       postgres: { condition: service_healthy }
     networks: [internal]
     expose: ["9890"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9890/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     profiles: ["channels"]
+    restart: unless-stopped
 
 networks:
   internal: { internal: true }
   public: {}
+  milvus_default: { external: true }
 
 volumes:
   postgres-data: {}
