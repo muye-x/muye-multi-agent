@@ -3,6 +3,7 @@ Agent 管理器 - 单例模式管理 Agent 实例
 """
 import asyncio
 import logging
+import os
 from pathlib import Path
 import uuid
 from contextlib import AsyncExitStack
@@ -29,8 +30,8 @@ from muye_multi_agent_sdk.runtime import CheckpointerManager, ExecutionManager, 
 logger = logging.getLogger(__name__)
 
 STREAM_LOCK_WAIT_TIMEOUT_SECONDS = 60.0
-STREAM_IDLE_TIMEOUT_SECONDS = 60.0
-STREAM_MAX_HOLD_TIMEOUT_SECONDS = 300.0
+STREAM_IDLE_TIMEOUT_SECONDS = float(os.getenv("MUYE_STREAM_IDLE_TIMEOUT_SECONDS", "240"))
+STREAM_MAX_HOLD_TIMEOUT_SECONDS = float(os.getenv("MUYE_STREAM_MAX_HOLD_TIMEOUT_SECONDS", "600"))
 
 
 async def _record_local_dev_citation(*_args: object, **_kwargs: object) -> None:
