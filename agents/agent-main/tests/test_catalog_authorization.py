@@ -175,6 +175,44 @@ def test_circuit_breaker_is_isolated_by_agent_id() -> None:
     asyncio.run(run())
 
 
+def test_sub_agent_runtime_guard_queues_and_limits_each_request() -> None:
+    """同请求重复调用被拒绝，请求结束后预算被释放且名额可供其他请求排队获得。"""
+    guard = SubAgentRuntimeGuard(queue_wait_seconds=0.2)
+
+    async def run() -> None:
+        first = await guard.acquire("agent_product", 1, request_id="request-1")
+        waiter = asyncio.create_task(guard.acquire("agent_product", 1, request_id="request-2"))
+        await asyncio.sleep(0)
+        first.release()
+        second = await waiter
+        second.release()
+        try:
+            await guard.acquire("agent_product", 1, request_id="request-1")
+        except SubAgentRuntimeError as exc:
+            assert exc.code == "REQUEST_LIMIT_REACHED"
+        else:
+            raise AssertionError("同一请求重复调用子 Agent 必须被拒绝")
+        guard.finish_request("request-1")
+        reused = await guard.acquire("agent_product", 1, request_id="request-1")
+        reused.release()
+
+    asyncio.run(run())
+
+
+def test_empty_sub_agent_result_is_reported_as_dependency_failure() -> None:
+    """空 SSE 不能伪装为成功，避免模型继续放大检索请求。"""
+    descriptor = _descriptor()
+    tool = build_sub_agent_tools(
+        SubAgentRegistry([descriptor]),
+        caller=_Caller({"event": "done", "data": {}}),
+        token_provider=lambda _agent_id: "target-token",
+    )[0]
+
+    result = asyncio.run(tool.ainvoke({"task": "查询"}, config=_config(descriptor)))
+
+    assert result == "[DEPENDENCY_UNAVAILABLE] 子 Agent 未返回可展示结果"
+
+
 def _active_snapshot():
     return build_catalog_snapshot(
         [
