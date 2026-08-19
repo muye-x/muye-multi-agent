@@ -22,25 +22,40 @@ async function submit() {
 }
 </script>
 <template>
-  <section class="login">
-    <form @submit.prevent="submit">
-      <h1>Muye Control</h1>
-      <label
-        >用户名<input
-          v-model.trim="username"
-          autocomplete="username"
-          required
-          minlength="3" /></label
-      ><label
-        >密码<input
-          v-model="password"
-          type="password"
-          autocomplete="current-password"
-          required
-          minlength="12"
-      /></label>
-      <p v-if="error" role="alert">{{ error }}</p>
-      <button :disabled="pending">{{ pending ? "登录中" : "登录" }}</button>
+  <section class="login" aria-labelledby="login-title">
+    <form class="login-panel" @submit.prevent="submit">
+      <header class="login-heading">
+        <span class="login-mark" aria-hidden="true">M</span>
+        <div>
+          <p>Muye Multi-Agent</p>
+          <h1 id="login-title">Control Console</h1>
+        </div>
+      </header>
+      <div class="login-fields">
+        <label for="login-username">
+          用户名
+          <input
+            id="login-username"
+            v-model.trim="username"
+            autocomplete="username"
+            required
+            minlength="3"
+          />
+        </label>
+        <label for="login-password">
+          密码
+          <input
+            id="login-password"
+            v-model="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            minlength="12"
+          />
+        </label>
+      </div>
+      <p v-if="error" class="login-error" role="alert">{{ error }}</p>
+      <button type="submit" :disabled="pending">{{ pending ? "登录中" : "登录" }}</button>
     </form>
   </section>
 </template>
