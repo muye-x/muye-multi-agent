@@ -19,6 +19,7 @@ async function logout() {
       ><RouterLink to="/chat">对话</RouterLink
       ><RouterLink to="/agents">Agents</RouterLink
       ><RouterLink to="/grants">授权</RouterLink
+      ><RouterLink to="/channels/wechat">微信</RouterLink
       ><button title="退出登录" aria-label="退出登录" @click="logout">退出</button>
     </nav>
     <RouterView />

@@ -41,6 +41,7 @@ class ChannelConfig(BaseModel):
     main_token: str = Field(min_length=16)
     encryption_key: str = Field(min_length=40)
     database_url: str = Field(min_length=16)
+    agent_timeout_seconds: float = Field(default=240, gt=0, le=300)
     ilink_base_url: str
     allowed_hosts: set[str]
 
@@ -54,6 +55,7 @@ class ChannelConfig(BaseModel):
             main_token=os.getenv("MUYE_CHANNELS_MAIN_TOKEN", "").strip(),
             encryption_key=os.getenv("MUYE_CHANNELS_ENCRYPTION_KEY", "").strip(),
             database_url=os.getenv("MUYE_CHANNELS_DATABASE_URL", "").strip(),
+            agent_timeout_seconds=float(os.getenv("MUYE_CHANNELS_AGENT_TIMEOUT_SECONDS", "240")),
             ilink_base_url=base_url,
             allowed_hosts=allowed,
         )
@@ -367,7 +369,11 @@ def create_app(config: ChannelConfig | None = None, *, client: httpx.AsyncClient
     store = ChannelStore(resolved.database_url, crypto)
     upstream = client or httpx.AsyncClient(timeout=40, trust_env=False)
     ilink = ILinkClient(resolved, upstream)
-    agent = ChannelAgentClient(resolved.main_url, resolved.main_token)
+    agent = ChannelAgentClient(
+        resolved.main_url,
+        resolved.main_token,
+        timeout_seconds=resolved.agent_timeout_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

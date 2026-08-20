@@ -15,7 +15,8 @@ server {
     location /api/v2/channels/ {
         auth_request /_muye_session_auth;
         auth_request_set $muye_user_id $upstream_http_x_muye_user_id;
-        proxy_pass ${MUYE_CHANNELS_URL}/api/v1/;
+        rewrite ^/api/v2/channels/(.*)$ /api/v1/$1 break;
+        proxy_pass ${MUYE_CHANNELS_URL};
         proxy_set_header Authorization "Bearer ${MUYE_CHANNELS_CALLER_TOKEN}";
         proxy_set_header X-Muye-User-Id $muye_user_id;
         proxy_set_header Host $host;

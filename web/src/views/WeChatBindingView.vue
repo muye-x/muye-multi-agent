@@ -32,16 +32,25 @@ void load()
 </script>
 
 <template>
-  <section class="page-panel" aria-labelledby="wechat-title">
-    <h1 id="wechat-title">微信接入</h1>
-    <p>{{ statusText }}</p>
-    <p v-if="error" role="alert">{{ error }}</p>
-    <button v-if="status === 'unbound' || status === 'expired' || status === 'error'" type="button" @click="createQrCode">获取二维码</button>
-    <img v-if="qrSvg && status !== 'active'" :src="qrSvg" width="240" height="240" alt="微信绑定二维码" />
-    <form v-if="status === 'need_verifycode'" @submit.prevent="submitVerify">
-      <label>验证码 <input v-model="verifyCode" inputmode="numeric" maxlength="32" required /></label>
-      <button type="submit">确认</button>
-    </form>
-    <button v-if="status === 'active'" type="button" @click="unbind">解除绑定</button>
+  <section class="console-page wechat-page" aria-labelledby="wechat-title">
+    <header class="page-heading"><p>CHANNELS</p><h1 id="wechat-title">微信接入</h1><span>管理 Control Console 与微信账号的连接状态。</span></header>
+    <div class="wechat-layout">
+      <div class="binding-status data-panel">
+        <span :class="['binding-dot', status]" aria-hidden="true" />
+        <div><span>当前状态</span><strong>{{ statusText }}</strong></div>
+        <p v-if="status === 'active'">微信已连接，可以正常接收和发送消息。</p>
+        <p v-else>完成扫码确认后，消息将通过已绑定的微信账号收发。</p>
+      </div>
+      <div class="data-panel binding-workspace">
+        <div class="data-panel-heading"><h2>账号绑定</h2><span>微信</span></div>
+        <p v-if="error" class="inline-alert" role="alert">{{ error }}</p>
+        <div v-if="qrSvg && status !== 'active'" class="qr-panel"><img :src="qrSvg" width="240" height="240" alt="微信绑定二维码" /><p>{{ statusText }}</p></div>
+        <form v-if="status === 'need_verifycode'" class="verify-form" @submit.prevent="submitVerify"><label for="wechat-verify-code">微信验证码</label><div><input id="wechat-verify-code" v-model="verifyCode" inputmode="numeric" maxlength="32" required /><button type="submit">确认</button></div></form>
+        <div class="binding-actions">
+          <button v-if="status === 'unbound' || status === 'expired' || status === 'error'" type="button" @click="createQrCode">获取二维码</button>
+          <button v-if="status === 'active'" class="secondary-button" type="button" @click="unbind">解除绑定</button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>

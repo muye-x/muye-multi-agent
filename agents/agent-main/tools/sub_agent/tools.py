@@ -169,7 +169,11 @@ def build_sub_agent_tools(
                     token = raw_token.get_secret_value() if isinstance(raw_token, SecretStr) else raw_token
                 if _descriptor.catalog_revision and (not isinstance(token, str) or not token.strip()):
                     raise SubAgentCallError("AUTHENTICATION_ERROR", "子 Agent 服务凭据不可用")
-                semaphore = await guard.acquire(_descriptor.agent_id, _descriptor.max_concurrency)
+                semaphore = await guard.acquire(
+                    _descriptor.agent_id,
+                    _descriptor.max_concurrency,
+                    request_id=trace_id,
+                )
                 if writer is not None:
                     writer({"tool_id": tool_id, "tool_name": tool_name, "status": "start", "input": {"task": task}, "log": "正在调用子 Agent", "progress": 0})
                 result_parts: list[str] = []
@@ -188,6 +192,8 @@ def build_sub_agent_tools(
                         citations[evidence.citation_id] = evidence
                     if event.get("event") == "block":
                         result_parts.append(str(_model_visible_event(event).get("data", {})))
+                if not result_parts:
+                    raise SubAgentCallError("DEPENDENCY_UNAVAILABLE", "子 Agent 未返回可展示结果")
                 if citations and citation_recorder is None:
                     raise SubAgentCallError("DEPENDENCY_UNAVAILABLE", "可信引用记录服务不可用")
                 for evidence in citations.values():
@@ -223,7 +229,7 @@ def build_sub_agent_tools(
                 guard.succeeded(_descriptor.agent_id)
                 if writer is not None:
                     writer({"tool_id": tool_id, "tool_name": tool_name, "status": "complete", "duration_ms": int((time.monotonic() - started_at) * 1000)})
-                return "\n".join(result_parts) or "子 Agent 已完成，但未返回可展示结果。"
+                return "\n".join(result_parts)
             except asyncio.CancelledError:
                 if "user_id" in locals() and "session_id" in locals() and "trace_id" in locals():
                     try:

@@ -2,6 +2,7 @@
 FastAPI 服务端 - 支持流式/非流式对话、多轮对话、记忆管理
 """
 import asyncio
+import os
 import sys
 import logging
 from secrets import compare_digest
@@ -28,6 +29,7 @@ from api.trusted_context import trusted_user_id
 # 初始化统一日志系统
 init_default_logger()
 logger = logging.getLogger(__name__)
+CHANNEL_INVOKE_TIMEOUT_SECONDS = float(os.getenv("MUYE_CHANNELS_INVOKE_TIMEOUT_SECONDS", "180"))
 
 
 # ===== FastAPI 应用 =====
@@ -84,20 +86,33 @@ async def channel_invoke(request: ChannelInvokeRequest, raw_request: Request) ->
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_ERROR", "message": "Channel caller 无效"})
     try:
         manager = await AgentManager.get_instance()
-        result = await manager.chat(
-            user_input=request.message.content,
-            user_id=request.user_id,
-            session_id=request.session_id,
-            files=None,
-            user_location=None,
-            enable_knowledge=True,
-            user_informations=None,
-            trusted_user_id=request.user_id,
-        )
+        async with asyncio.timeout(CHANNEL_INVOKE_TIMEOUT_SECONDS):
+            result = await manager.chat(
+                user_input=request.message.content,
+                user_id=request.user_id,
+                session_id=request.session_id,
+                files=None,
+                user_location=None,
+                enable_knowledge=True,
+                user_informations=None,
+                trusted_user_id=request.user_id,
+            )
         content = result.get("messages", [])[-1].content if result.get("messages") else ""
         if isinstance(content, str) and content.strip():
             return ChannelInvokeResponse(status="success", trace_id=request.trace_id, message=ChannelTextMessage(content=content))
         return ChannelInvokeResponse(status="error", trace_id=request.trace_id, error={"code": "INVALID_AGENT_RESPONSE", "message": "MainAgent 未返回文本", "recoverable": False})
+    except TimeoutError:
+        logger.warning(
+            "Channel 调用 MainAgent 超时 [channel=%s trace_id=%s timeout_seconds=%s]",
+            request.channel,
+            request.trace_id,
+            CHANNEL_INVOKE_TIMEOUT_SECONDS,
+        )
+        return ChannelInvokeResponse(
+            status="clarification_needed",
+            trace_id=request.trace_id,
+            message=ChannelTextMessage(content="当前请求处理超时，请稍后再试。"),
+        )
     except Exception:
         logger.exception("Channel 调用 MainAgent 失败 [channel=%s trace_id=%s]", request.channel, request.trace_id)
         return ChannelInvokeResponse(status="error", trace_id=request.trace_id, error={"code": "AGENT_UNAVAILABLE", "message": "Agent 调用失败", "recoverable": True})

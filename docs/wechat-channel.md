@@ -11,9 +11,24 @@
 同时将 `MUYE_CHANNELS_MAIN_TOKEN` 设置到 `agents/agent-main/.env`，并将 channels
 caller token 设置到 Gateway 环境。渠道状态写入 PostgreSQL 的 `channel_*` 表。
 
-本地启动器仅在 `MUYE_CHANNELS_ENABLED=true` 时启动该服务。生产 Compose 使用
-`--profile channels` 启动；渠道绑定、游标、消息和投递状态写入 PostgreSQL。
+根目录 Compose 默认启动 `channels` 服务；渠道绑定、游标、消息和投递状态写入
+PostgreSQL。`muye-channels/.env` 必须配置 `MUYE_CHANNELS_CALLER_TOKEN`、
+`MUYE_CHANNELS_MAIN_TOKEN` 和 `MUYE_CHANNELS_ENCRYPTION_KEY`。
 绑定页面位于控制台的“微信”导航项，登录用户只能管理自己的一个活动微信绑定；再次确认二维码会替换旧绑定。
+
+## 生产验证
+
+在 `muye-channels/.env` 中配置上述三个值，其中 caller token 必须与 Gateway 使用的值
+相同，main token 必须与 Agent Main 使用的值相同。之后从仓库根目录执行：
+
+```bash
+docker compose up -d --build channels gateway
+docker compose ps channels gateway
+```
+
+登录控制台后，选择导航栏的“微信”，点击“获取二维码”，用微信扫描页面显示的二维码。
+手机确认后，页面应显示“已绑定”；若页面要求验证码，输入手机显示的验证码并确认。可通过
+`docker compose logs -f channels` 查看绑定和消息轮询日志。
 
 ## 安全与语义
 

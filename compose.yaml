@@ -152,9 +152,11 @@ services:
       MUYE_AGENT_MAIN_URL: http://agent-main:9860
       MUYE_DASHBOARD_API_URL: http://dashboard-api:9870
       MUYE_CONTROL_BASE_URL: http://control:9880
+      MUYE_CHANNELS_URL: http://channels:9890
     depends_on:
       dashboard-api: { condition: service_healthy }
       agent-main: { condition: service_healthy }
+      channels: { condition: service_healthy }
     networks: [internal, public]
     ports: ["8080:80"]
     volumes:
@@ -182,11 +184,11 @@ services:
     environment:
       MUYE_CHANNELS_HOST: 0.0.0.0
       MUYE_CHANNELS_MAIN_URL: http://agent-main:9860
-      MUYE_CHANNELS_DATABASE_URL: ${MUYE_CHANNELS_DATABASE_URL:-postgresql://muye:muye@postgres:5432/muye}
     depends_on:
       agent-main: { condition: service_healthy }
       postgres: { condition: service_healthy }
-    networks: [internal]
+    # iLink is an external HTTPS API; PostgreSQL and Agent Main remain on internal.
+    networks: [internal, public]
     expose: ["9890"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9890/health')"]
@@ -194,7 +196,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    profiles: ["channels"]
     restart: unless-stopped
 
 networks:

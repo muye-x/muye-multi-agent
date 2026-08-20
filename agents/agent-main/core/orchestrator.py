@@ -3,6 +3,7 @@ Agent 管理器 - 单例模式管理 Agent 实例
 """
 import asyncio
 import logging
+import os
 from pathlib import Path
 import uuid
 from contextlib import AsyncExitStack
@@ -29,8 +30,8 @@ from muye_multi_agent_sdk.runtime import CheckpointerManager, ExecutionManager, 
 logger = logging.getLogger(__name__)
 
 STREAM_LOCK_WAIT_TIMEOUT_SECONDS = 60.0
-STREAM_IDLE_TIMEOUT_SECONDS = 60.0
-STREAM_MAX_HOLD_TIMEOUT_SECONDS = 300.0
+STREAM_IDLE_TIMEOUT_SECONDS = float(os.getenv("MUYE_STREAM_IDLE_TIMEOUT_SECONDS", "240"))
+STREAM_MAX_HOLD_TIMEOUT_SECONDS = float(os.getenv("MUYE_STREAM_MAX_HOLD_TIMEOUT_SECONDS", "600"))
 
 
 async def _record_local_dev_citation(*_args: object, **_kwargs: object) -> None:
@@ -108,6 +109,8 @@ class AgentManager:
             self.sub_agent_runtime_guard = SubAgentRuntimeGuard(
                 failure_threshold=catalog_config.circuit_failure_threshold,
                 recovery_seconds=catalog_config.circuit_recovery_seconds,
+                queue_wait_seconds=catalog_config.sub_agent_queue_wait_seconds,
+                max_calls_per_request=catalog_config.sub_agent_max_calls_per_request,
             )
             self._agent_token_provider = catalog_config.agent_token
             if control_client is not None:
@@ -239,6 +242,8 @@ class AgentManager:
                 return result
 
             finally:
+                if self.sub_agent_runtime_guard is not None:
+                    self.sub_agent_runtime_guard.finish_request(trace_id)
                 logger.info(f"[{session_id}] 释放 session 锁（非流式）")
 
                 # 输出性能报告。
@@ -561,6 +566,8 @@ class AgentManager:
 
             finally:
                 await execution_stack.aclose()
+                if self.sub_agent_runtime_guard is not None:
+                    self.sub_agent_runtime_guard.finish_request(trace_id)
 
                 # 输出性能报告。
                 if profiler:
@@ -639,18 +646,23 @@ class AgentManager:
             token_provider=self._agent_token_provider,
             citation_recorder=self._citation_recorder,
         )
-        result = await tools[0].ainvoke(
-            {"task": "执行部署后只读健康 smoke，并返回简短成功结果。"},
-            config={
-                "configurable": {
-                    "user_id": trusted_user_id,
-                    "session_id": f"deploy-smoke-{uuid.uuid4().hex}",
-                    "trace_id": f"deploy_smoke_{uuid.uuid4().hex}",
-                    "catalog_revision": view.catalog_revision,
-                    "allowed_agent_ids": tuple(sorted(view.allowed_agent_ids)),
-                }
-            },
-        )
+        trace_id = f"deploy_smoke_{uuid.uuid4().hex}"
+        try:
+            result = await tools[0].ainvoke(
+                {"task": "执行部署后只读健康 smoke，并返回简短成功结果。"},
+                config={
+                    "configurable": {
+                        "user_id": trusted_user_id,
+                        "session_id": f"deploy-smoke-{uuid.uuid4().hex}",
+                        "trace_id": trace_id,
+                        "catalog_revision": view.catalog_revision,
+                        "allowed_agent_ids": tuple(sorted(view.allowed_agent_ids)),
+                    }
+                },
+            )
+        finally:
+            if self.sub_agent_runtime_guard is not None:
+                self.sub_agent_runtime_guard.finish_request(trace_id)
         if result.startswith("["):
             raise RuntimeError("目标 Agent smoke 未通过")
         return {"agent_id": agent_id, "status": "passed"}

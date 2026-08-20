@@ -147,6 +147,12 @@ class CatalogConfig:
     circuit_recovery_seconds: float = field(
         default_factory=lambda: float(os.getenv('MUYE_AGENT_CIRCUIT_RECOVERY_SECONDS', '30'))
     )
+    sub_agent_queue_wait_seconds: float = field(
+        default_factory=lambda: float(os.getenv('MUYE_AGENT_QUEUE_WAIT_SECONDS', '10'))
+    )
+    sub_agent_max_calls_per_request: int = field(
+        default_factory=lambda: int(os.getenv('MUYE_AGENT_MAX_CALLS_PER_REQUEST', '1'))
+    )
     local_dev_registration_path: str = field(
         default_factory=lambda: os.getenv("MUYE_LOCAL_DEV_REGISTRATION_PATH", "").strip()
     )
