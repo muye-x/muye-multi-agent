@@ -31,6 +31,7 @@ credentials.json
 logs/
 *.log
 *.log.*
+/deploy/backups/
 *.db
 *.db-*
 *.sqlite
