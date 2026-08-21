@@ -26,7 +26,7 @@ onMounted(async () => {
   <section class="overview-page" aria-labelledby="overview-title">
     <header class="page-heading">
       <div>
-        <p class="eyebrow">控制中心</p>
+        <p class="eyebrow">CONTROL PLANE</p>
         <h1 id="overview-title">服务状态</h1>
         <p>查看已登记 Agent 的当前可用状态与能力信息。</p>
       </div>
