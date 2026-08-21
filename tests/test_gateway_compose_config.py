@@ -69,6 +69,8 @@ def test_gateway_supports_explicit_http_mode_without_tls_redirect() -> None:
     assert "listen 80;" in source
     assert "return 301 https://" not in source
     assert "X-Forwarded-Proto http" in source
+    assert "rewrite ^/api/v2/channels/(.*)$ /api/v1/$1 break;" in source
+    assert "proxy_pass $channels_upstream;" in source
 
 
 def test_generated_agent_compose_uses_internal_llm_and_data_urls() -> None:
