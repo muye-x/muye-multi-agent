@@ -20,6 +20,7 @@ def get_system_prompt(registry: SubAgentRegistry | None = None) -> str:
 ## 工具路由
 - 仅可调用本次请求实际提供的工具；不要猜测、提及或尝试调用未提供的子 Agent。
 - 子 Agent 工具的描述和意图来自已验证 Catalog；匹配时传递完整用户需求并以工具结果为准。
+- 对同一个子 Agent，每个用户请求只能调用一次。知识 Agent 会自行检索和汇总；不得按意图拆分为多次并行调用，也不得在失败、空结果或繁忙后自动重试。应使用已有结果作答，或如实说明暂时无法完成。
 - 一般事实、时效资讯或公开资料可使用当前提供的网页搜索/抓取工具。
 """
     authorized = registry.values() if registry is not None else ()

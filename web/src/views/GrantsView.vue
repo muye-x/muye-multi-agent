@@ -27,7 +27,9 @@ onMounted(async () => { try { [users.value, agents.value] = [(await api.users())
         <h2>选择用户</h2>
         <label for="grant-user">当前用户</label>
         <select id="grant-user" v-model="selected">
-          <option v-for="user in users" :key="user.user_id" :value="user.user_id">{{ user.username }}</option>
+          <option v-for="user in users" :key="user.user_id" :value="user.user_id">
+            {{ user.username }}
+          </option>
         </select>
         <p v-if="selectedUser">正在管理 {{ selectedUser.username }} 的访问权限。</p>
       </div>

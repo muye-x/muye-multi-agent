@@ -4,7 +4,6 @@ import { api, type Agent } from '../api'
 
 const agents = ref<Agent[]>([])
 const error = ref('')
-
 const runningCount = computed(() => agents.value.filter((agent) => agent.status === 'ACTIVE').length)
 const startingCount = computed(() => agents.value.filter((agent) => agent.status === 'STARTING').length)
 const unhealthyCount = computed(() => agents.value.filter((agent) => !['ACTIVE', 'STARTING'].includes(agent.status)).length)

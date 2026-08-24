@@ -24,6 +24,7 @@ deploy/
 | `jimmydou/muye-muye-llm:latest` | LLM 代理 |
 | `jimmydou/muye-muye-data:latest` | RAG 检索 |
 | `jimmydou/muye-agent-hotel-employee:0.1.0` | 酒店员工手册子 Agent |
+| `jimmydou/muye-muye-channels:latest` | 微信 iLink Channel |
 
 ### 1.2 公共镜像（自动拉取，无需推送）
 
@@ -73,8 +74,8 @@ openssl rand -hex 32  # 生成 64 位十六进制 token
 # 4. 启动 Milvus（独立 compose）
 docker compose -f poc/phase1/milvus/compose.yaml up -d
 
-# 5. 启动主服务
-docker compose -f deploy/compose.production.yaml up -d
+# 5. 构建并启动主服务（包含微信 channels）
+docker compose -f deploy/compose.production.yaml up -d --build
 
 # 6. 初始化数据库（首次部署）
 docker exec -i muye-postgres-1 psql -U muye -d muye < deploy/init-db.sql

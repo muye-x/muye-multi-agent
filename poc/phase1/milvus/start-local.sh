@@ -6,7 +6,10 @@ workspace_root="$(cd -- "${script_directory}/../../.." && pwd)"
 python_executable="${workspace_root}/.venv/bin/python"
 compose_file="${script_directory}/compose.yaml"
 environment_file="${script_directory}/.env"
-project_name="muye-phase1-milvus"
+# Root Compose connects muye-data to the external ``milvus_default`` network
+# and resolves the standalone service as ``milvus-milvus-1``. Keep the local
+# project name aligned so this helper starts the exact dependency it declares.
+project_name="milvus"
 
 if [[ ! -x "${python_executable}" ]]; then
   printf 'error: Scaffold Python environment is unavailable: %s\n' "${python_executable}" >&2

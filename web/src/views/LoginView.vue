@@ -32,11 +32,26 @@ async function submit() {
         </div>
       </header>
       <div class="login-fields">
-        <label for="login-username">用户名
-          <input id="login-username" v-model.trim="username" autocomplete="username" required minlength="3" />
+        <label for="login-username">
+          用户名
+          <input
+            id="login-username"
+            v-model.trim="username"
+            autocomplete="username"
+            required
+            minlength="3"
+          />
         </label>
-        <label for="login-password">密码
-          <input id="login-password" v-model="password" type="password" autocomplete="current-password" required minlength="12" />
+        <label for="login-password">
+          密码
+          <input
+            id="login-password"
+            v-model="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            minlength="12"
+          />
         </label>
       </div>
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
