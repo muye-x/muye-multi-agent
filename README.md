@@ -239,6 +239,7 @@ PYTHONPATH=agents/agent-main \
 - [运维指南](docs/v2.0-operations.md)
 - [发布检查表](docs/v2.0-release-checklist.md)
 - [微信 Channel 接入](docs/wechat-channel.md)
+- [Hermes 接入 Muye Main Agent](docs/Hermes接入指南.md)
 
 ## 10. 安全边界
 

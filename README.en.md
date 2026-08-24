@@ -257,6 +257,7 @@ The Chinese documentation remains the source documentation. See the English
 - [Administrator guide](docs/v2.0-admin-guide.md)
 - [Operations guide](docs/v2.0-operations.md)
 - [Release checklist](docs/v2.0-release-checklist.md)
+- [Hermes integration with Muye Main Agent](docs/Hermes接入指南.md) (Chinese)
 
 ## 10. Security boundary
 

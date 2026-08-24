@@ -1,0 +1,41 @@
+# This file targets milvus-backup v0.5.16 and intentionally contains no
+# credentials. Supply the MinIO keys via milvus-backup --set arguments or a
+# secret manager at runtime.
+log:
+  level: info
+  console: true
+
+milvus:
+  address: milvus
+  port: 19530
+  tlsMode: 0
+
+minio:
+  storageType: minio
+  address: minio
+  port: 9000
+  useSSL: false
+  bucketName: a-bucket
+  rootPath: files
+  accessKeyID: ""
+  secretAccessKey: ""
+  backupStorageType: minio
+  backupAddress: minio
+  backupPort: 9000
+  backupUseSSL: false
+  backupBucketName: a-bucket
+  backupRootPath: backup
+  backupAccessKeyID: ""
+  backupSecretAccessKey: ""
+  crossStorage: false
+
+backup:
+  parallelism:
+    copydata: 16
+    backupCollection: 1
+    backupSegment: 16
+    restoreCollection: 1
+    importJob: 16
+  gcPause:
+    enable: true
+    address: http://milvus:9091

@@ -9,7 +9,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/login', component: () => import('./views/LoginView.vue') },
   localDev ? { path: '/', redirect: '/chat' } : { path: '/', component: () => import('./views/OverviewView.vue') },
   { path: '/chat', component: () => import('./views/ChatView.vue') },
-  { path: '/agents', component: () => import('./views/AgentsView.vue') },
+  { path: '/agents', redirect: '/' },
   { path: '/grants', component: () => import('./views/GrantsView.vue') },
   { path: '/channels/wechat', component: () => import('./views/WeChatBindingView.vue') },
 ]

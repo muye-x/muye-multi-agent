@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, type Agent, type User } from '../api'
-
 const users = ref<User[]>([])
 const agents = ref<Agent[]>([])
 const selected = ref('')
@@ -9,7 +8,6 @@ const grants = ref<string[]>([])
 const error = ref('')
 const saved = ref(false)
 const selectedUser = computed(() => users.value.find((user) => user.user_id === selected.value))
-
 async function loadGrants() { if (!selected.value) return; saved.value = false; grants.value = (await api.grants(selected.value)).agent_ids }
 function toggle(agentId: string) { grants.value = grants.value.includes(agentId) ? grants.value.filter((id) => id !== agentId) : [...grants.value, agentId] }
 async function save() { try { await api.replaceGrants(selected.value, grants.value); saved.value = true } catch (reason) { error.value = reason instanceof Error ? reason.message : '保存失败' } }
@@ -28,7 +26,11 @@ onMounted(async () => { try { [users.value, agents.value] = [(await api.users())
       <div class="data-panel user-selector">
         <h2>选择用户</h2>
         <label for="grant-user">当前用户</label>
-        <select id="grant-user" v-model="selected"><option v-for="user in users" :key="user.user_id" :value="user.user_id">{{ user.username }}</option></select>
+        <select id="grant-user" v-model="selected">
+          <option v-for="user in users" :key="user.user_id" :value="user.user_id">
+            {{ user.username }}
+          </option>
+        </select>
         <p v-if="selectedUser">正在管理 {{ selectedUser.username }} 的访问权限。</p>
       </div>
       <div class="data-panel grant-panel">
