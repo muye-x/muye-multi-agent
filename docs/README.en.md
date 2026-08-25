@@ -25,6 +25,8 @@ documentation experience.
 | [Operations guide](v2.0-operations.md) | Compose startup, configuration, backups, logging, smoke checks, and production network boundaries. |
 | [Release checklist](v2.0-release-checklist.md) | Immutable release evidence, validation gates, deployment verification, and backup recovery checks. |
 | [Hermes integration with Muye Main Agent](Hermes接入指南.md) | Internal HTTP/SSE integration, authorization setup, and troubleshooting for Hermes. |
+| [WeChat Channel integration](wechat-channel.en.md) | WeChat iLink binding, credential boundaries, message handling, and production verification. |
+| [Production deployment guide](../deploy/README.en.md) | Production Compose topology, configuration, startup, and routine operations. |
 
 ## Architecture decisions
 
