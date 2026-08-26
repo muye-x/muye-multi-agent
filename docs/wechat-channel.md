@@ -12,14 +12,14 @@
 caller token 设置到 Gateway 环境。渠道状态写入 PostgreSQL 的 `channel_*` 表。
 
 根目录 Compose 默认启动 `channels` 服务；渠道绑定、游标、消息和投递状态写入
-PostgreSQL。`muye-channels/.env` 必须配置 `MUYE_CHANNELS_CALLER_TOKEN`、
-`MUYE_CHANNELS_MAIN_TOKEN` 和 `MUYE_CHANNELS_ENCRYPTION_KEY`。
+PostgreSQL。开发环境使用 `muye-channels/.env`，生产 Compose 使用部署根目录 `.env`；两种环境都必须配置 `MUYE_CHANNELS_CALLER_TOKEN`、`MUYE_CHANNELS_MAIN_TOKEN` 和 `MUYE_CHANNELS_ENCRYPTION_KEY`。
 绑定页面位于控制台的“微信”导航项，登录用户只能管理自己的一个活动微信绑定；再次确认二维码会替换旧绑定。
+
+Gateway 将浏览器的 `/api/v2/channels/` 请求代理为 channels 服务的 `/api/v1/` 请求。该路由先经 Control 会话认证，再注入 caller token 和可信的用户 ID；不要绕过 Gateway 暴露 channels 服务端口。
 
 ## 生产验证
 
-在 `muye-channels/.env` 中配置上述三个值，其中 caller token 必须与 Gateway 使用的值
-相同，main token 必须与 Agent Main 使用的值相同。之后从仓库根目录执行：
+在开发环境的 `muye-channels/.env` 或生产 Compose 的 `.env` 中配置上述三个值，其中 caller token 必须与 Gateway 使用的值相同，main token 必须与 Agent Main 使用的值相同。之后从仓库根目录执行：
 
 ```bash
 docker compose up -d --build channels gateway

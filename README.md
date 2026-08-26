@@ -57,9 +57,9 @@ Web / API Client
        |
        v
 muye-gateway  -->  agent-main  -->  agent-<slug>
-                         |               |
-                         v               v
-                     muye-llm         muye-data  -->  Milvus
+       |                 |               |
+       v                 v               v
+muye-channels         muye-llm       muye-data  -->  Milvus
                          |
                          +----------> OpenAI-compatible models
 
@@ -73,6 +73,7 @@ control  -->  Catalog / grant / health / citation authorization
 | `agent-<slug>` | 8000 | 生成的业务知识 SubAgent |
 | `agent-main` | 9860 | 对话、工具调用与 SubAgent 编排 |
 | `control` | 9880 | Catalog、授权、健康状态与 citation 投影 |
+| `muye-channels` | 9890 | 微信 iLink 绑定、消息游标与投递隔离服务 |
 | Web Dev Gateway | 5173 | v2.1 本地对话和 SSE 调试界面 |
 | `muye-gateway` | 80/443 | 正式环境 TLS、鉴权与公网路由 |
 
@@ -203,7 +204,15 @@ v2.1 的 `/chat` 页面用于检查真实的 MainAgent -> SubAgent 执行过程�
 需要人工审阅创建计划、处理资料变更或接入 CI 时，可使用分步审批流程。详见
 [一键创建和测试知识 Agent](docs/agent-creation-quickstart.md)。
 
-## 7. 流式协议
+## 7. 控制台与微信 Channel
+
+生产控制台提供服务状态、对话、用户 Agent 授权和微信绑定入口。`/agents` 会重定向至服务状态页；已登录用户只能管理自己的一个活动微信绑定。扫码确认完成后，微信文本消息会以该绑定用户的 grant 进入 MainAgent；图片、语音、文件和视频不会转发给 Agent。
+
+`muye-channels` 是 iLink 凭据、二维码流程、消息游标和投递状态的隔离服务。Gateway 仅在已验证 Control 登录会话后，才代理 `/api/v2/channels/` 至该内部服务，并注入独立的 channels caller token。生产部署需要分别配置 `MUYE_CHANNELS_CALLER_TOKEN`、`MUYE_CHANNELS_MAIN_TOKEN` 和 base64 编码的 32 字节 `MUYE_CHANNELS_ENCRYPTION_KEY`，且三者不得与其他服务凭据复用。详见[微信 Channel 接入](docs/wechat-channel.md)。
+
+MainAgent 对每个子 Agent 保留独立的熔断与并发保护：单个请求默认最多调用同一子 Agent 一次，繁忙时在限定时间内排队，空响应会作为依赖错误处理。可通过 `MUYE_AGENT_QUEUE_WAIT_SECONDS`、`MUYE_AGENT_MAX_CALLS_PER_REQUEST`、`MUYE_STREAM_IDLE_TIMEOUT_SECONDS` 和 `MUYE_STREAM_MAX_HOLD_TIMEOUT_SECONDS` 按部署容量调整。
+
+## 8. 流式协议
 
 SubAgent 提供 `/health`、`/capabilities`、`/invoke`、`/invoke/stream` 和 `/cancel` internal API。
 流式事件生命周期为：
@@ -214,7 +223,7 @@ session_start -> block / tool / thinking -> done -> session_end
 
 同一 `block.id` 的 `delta` 按到达顺序追加；不同 block 必须独立处理。
 
-## 8. 测试
+## 9. 测试
 
 ```bash
 PYTHONPATH=muye-llm:muye-gateway \
@@ -227,9 +236,9 @@ PYTHONPATH=agents/agent-main \
 .venv/bin/python main.py --dry-run
 ```
 
-## 9. 文档
+## 10. 文档
 
-英文读者可先查看 [English documentation index](docs/README.en.md)，以获取各中文权威文档的英文说明和入口。
+英文读者可先查看 [English documentation index](docs/README.en.md)，以获取已翻译英文文档及各中文权威文档的说明和入口。
 
 - [一键创建和测试知识 Agent](docs/agent-creation-quickstart.md)
 - [模板 Agent Generator 与开发者接管](docs/v2.0-agent-generator.md)
@@ -239,14 +248,15 @@ PYTHONPATH=agents/agent-main \
 - [运维指南](docs/v2.0-operations.md)
 - [发布检查表](docs/v2.0-release-checklist.md)
 - [微信 Channel 接入](docs/wechat-channel.md)
+- [生产部署指南](deploy/README.md)
 - [Hermes 接入 Muye Main Agent](docs/Hermes接入指南.md)
 
-## 10. 安全边界
+## 11. 安全边界
 
 - `agent dev` 只监听 loopback，每次仅注册当前 SubAgent，并使用临时随机 Token 和 local-dev 身份。
 - 本地联调数据写入 `config/runtime/dev/<slug>/`，不会修改正式 Control Catalog、BuildRecord 或用户 grant。
 - `muye-data` 与 `muye-llm` 只应由可信内网服务访问；数据库账号必须限制为只读权限。
-- 生产环境只公开 Gateway 的 Web、`/api/v2/` 和 `/agentMain/`，所有 SubAgent 均使用 internal profile。
+- 生产环境只公开 Gateway 的 Web、`/api/v2/` 和 `/agentMain/`；`/api/v2/channels/` 需要已验证的 Control 会话。所有 SubAgent 均使用 internal profile。
 
 ## 许可证
 

@@ -58,9 +58,9 @@ Web / API Client
        |
        v
 muye-gateway  -->  agent-main  -->  agent-<slug>
-                         |               |
-                         v               v
-                     muye-llm         muye-data  -->  Milvus
+       |                 |               |
+       v                 v               v
+muye-channels         muye-llm       muye-data  -->  Milvus
                          |
                          +----------> OpenAI-compatible models
 
@@ -74,6 +74,7 @@ control  -->  Catalog / grant / health / citation authorization
 | `agent-<slug>` | 8000 | Generated business knowledge SubAgent |
 | `agent-main` | 9860 | Chat, tool calls, and SubAgent orchestration |
 | `control` | 9880 | Catalog, grants, health, and citation projection |
+| `muye-channels` | 9890 | Isolated WeChat iLink binding, message cursor, and delivery service |
 | Web Dev Gateway | 5173 | v2.1 local chat and SSE debugging UI |
 | `muye-gateway` | 80/443 | Production TLS, authentication, and public routing |
 
@@ -220,7 +221,15 @@ The v2.1 `/chat` page shows the actual MainAgent -> SubAgent execution path:
 For a reviewable, stepwise approval flow, material changes, or CI integration, see
 [Create and test a knowledge Agent](docs/agent-creation-quickstart.md) (Chinese).
 
-## 7. Streaming protocol
+## 7. Control console and WeChat Channel
+
+The production console provides service status, chat, user-to-Agent grants, and WeChat binding. `/agents` redirects to the service-status page, and a signed-in user can manage one active WeChat binding. After scan confirmation, WeChat text messages enter MainAgent with the grants of the bound user; images, voice messages, files, and video are not forwarded to an Agent.
+
+`muye-channels` isolates iLink credentials, the QR flow, message cursors, and delivery state. Gateway proxies `/api/v2/channels/` to this internal service only after a Control session has been authenticated, and adds a separate channels caller token. A production deployment needs distinct `MUYE_CHANNELS_CALLER_TOKEN`, `MUYE_CHANNELS_MAIN_TOKEN`, and a base64-encoded 32-byte `MUYE_CHANNELS_ENCRYPTION_KEY`; none may be reused as another service credential. See [WeChat Channel integration](docs/wechat-channel.en.md).
+
+MainAgent keeps separate circuit-breaker and concurrency protection for each SubAgent: one request calls the same SubAgent at most once by default, waits for a bounded period when it is busy, and treats an empty response as a dependency error. Tune these deployment limits with `MUYE_AGENT_QUEUE_WAIT_SECONDS`, `MUYE_AGENT_MAX_CALLS_PER_REQUEST`, `MUYE_STREAM_IDLE_TIMEOUT_SECONDS`, and `MUYE_STREAM_MAX_HOLD_TIMEOUT_SECONDS`.
+
+## 8. Streaming protocol
 
 SubAgents expose the internal `/health`, `/capabilities`, `/invoke`,
 `/invoke/stream`, and `/cancel` APIs. Streaming events follow this lifecycle:
@@ -232,7 +241,7 @@ session_start -> block / tool / thinking -> done -> session_end
 Append `delta` values for the same `block.id` in arrival order; handle distinct
 blocks independently.
 
-## 8. Tests
+## 9. Tests
 
 ```bash
 PYTHONPATH=muye-llm:muye-gateway \
@@ -245,10 +254,10 @@ PYTHONPATH=agents/agent-main \
 .venv/bin/python main.py --dry-run
 ```
 
-## 9. Documentation
+## 10. Documentation
 
-The Chinese documentation remains the source documentation. See the English
-[documentation index](docs/README.en.md) for an overview and links.
+Detailed technical documentation is primarily maintained in Chinese. See the English
+[documentation index](docs/README.en.md) for English documents, summaries, and links.
 
 - [Create and test a knowledge Agent](docs/agent-creation-quickstart.md)
 - [Template Agent Generator and developer ownership](docs/v2.0-agent-generator.md)
@@ -257,9 +266,11 @@ The Chinese documentation remains the source documentation. See the English
 - [Administrator guide](docs/v2.0-admin-guide.md)
 - [Operations guide](docs/v2.0-operations.md)
 - [Release checklist](docs/v2.0-release-checklist.md)
+- [WeChat Channel integration](docs/wechat-channel.en.md)
+- [Production deployment guide](deploy/README.en.md)
 - [Hermes integration with Muye Main Agent](docs/Hermes接入指南.md) (Chinese)
 
-## 10. Security boundary
+## 11. Security boundary
 
 - `agent dev` listens on loopback only, registers only the current SubAgent, and
   uses a temporary random token with a local-development identity.
@@ -267,8 +278,9 @@ The Chinese documentation remains the source documentation. See the English
   modify the production Control Catalog, BuildRecord, or user grants.
 - `muye-data` and `muye-llm` must be accessible only to trusted internal services;
   database accounts must be read-only.
-- Production exposes only Gateway Web, `/api/v2/`, and `/agentMain/`; every
-  SubAgent uses the internal profile.
+- Production exposes only Gateway Web, `/api/v2/`, and `/agentMain/`;
+  `/api/v2/channels/` requires an authenticated Control session. Every SubAgent
+  uses the internal profile.
 
 ## License
 
