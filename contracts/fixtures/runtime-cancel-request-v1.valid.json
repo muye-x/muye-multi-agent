@@ -1,0 +1,5 @@
+{
+  "schema_version": "muye.ai/runtime-cancel-request/v1",
+  "request_id": "request_0123456789abcdef",
+  "reason": "deployment_drain"
+}

@@ -1,0 +1,42 @@
+{
+  "$id": "https://muye.ai/schemas/runtime-invoke-request-v1.schema.json",
+  "additionalProperties": false,
+  "description": "Core 发给固定 Runtime 的单次调用请求。",
+  "properties": {
+    "request_id": {
+      "pattern": "^request_[a-f0-9]{16,64}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/runtime-invoke-request/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "pattern": "^session_[A-Za-z0-9_-]{8,128}$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "task": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Task",
+      "type": "string"
+    },
+    "user_id": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "User Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "session_id",
+    "user_id",
+    "task"
+  ],
+  "title": "RuntimeInvokeRequestV1",
+  "type": "object"
+}

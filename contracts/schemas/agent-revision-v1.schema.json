@@ -1,0 +1,306 @@
+{
+  "$defs": {
+    "AgentBudgetV1": {
+      "additionalProperties": false,
+      "description": "单次 Runtime 调用的资源上限。",
+      "properties": {
+        "output_tokens": {
+          "maximum": 65536,
+          "minimum": 128,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "tool_calls": {
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Tool Calls",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "output_tokens",
+        "tool_calls",
+        "timeout_seconds"
+      ],
+      "title": "AgentBudgetV1",
+      "type": "object"
+    },
+    "AgentEvaluationCaseV1": {
+      "additionalProperties": false,
+      "description": "Revision 发布前必须重放的一条可审阅评测用例。",
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "expected_source_asset_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Expected Source Asset Ids",
+          "type": "array"
+        },
+        "question": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "question",
+        "expected_source_asset_ids"
+      ],
+      "title": "AgentEvaluationCaseV1",
+      "type": "object"
+    },
+    "AgentEvaluationConfigV1": {
+      "additionalProperties": false,
+      "description": "检索与 citation 发布门禁；阈值不写入 Prompt。",
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/AgentEvaluationCaseV1"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Cases",
+          "type": "array"
+        },
+        "citation_required": {
+          "title": "Citation Required",
+          "type": "boolean"
+        },
+        "minimum_pass_rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Minimum Pass Rate",
+          "type": "number"
+        }
+      },
+      "required": [
+        "cases",
+        "minimum_pass_rate",
+        "citation_required"
+      ],
+      "title": "AgentEvaluationConfigV1",
+      "type": "object"
+    },
+    "AgentModelConfigV1": {
+      "additionalProperties": false,
+      "description": "Revision 固定的模型 alias 与采样参数，不包含 provider 凭据。",
+      "properties": {
+        "chat_alias": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Chat Alias",
+          "type": "string"
+        },
+        "embedding_alias": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Embedding Alias",
+          "type": "string"
+        },
+        "temperature": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Temperature",
+          "type": "number"
+        }
+      },
+      "required": [
+        "chat_alias",
+        "embedding_alias",
+        "temperature"
+      ],
+      "title": "AgentModelConfigV1",
+      "type": "object"
+    },
+    "AgentRetrievalConfigV1": {
+      "additionalProperties": false,
+      "description": "Revision 固定的只读检索策略。",
+      "properties": {
+        "minimum_score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Minimum Score",
+          "type": "number"
+        },
+        "pipeline": {
+          "enum": [
+            "dense",
+            "keyword",
+            "hybrid"
+          ],
+          "title": "Pipeline",
+          "type": "string"
+        },
+        "rerank_alias": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Alias"
+        },
+        "top_k": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Top K",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pipeline",
+        "top_k",
+        "minimum_score"
+      ],
+      "title": "AgentRetrievalConfigV1",
+      "type": "object"
+    },
+    "RevisionSourceAssetV1": {
+      "additionalProperties": false,
+      "description": "一个被冻结到 Agent Revision 的内容寻址资料引用。",
+      "properties": {
+        "asset_id": {
+          "pattern": "^asset_[a-f0-9]{16,64}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "sha256",
+        "display_name"
+      ],
+      "title": "RevisionSourceAssetV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/agent-revision-v1.schema.json",
+  "additionalProperties": false,
+  "description": "声明式知识 Agent 的完整不可变逻辑输入。\n\n该对象不包含数据库地址、Artifact 路径、镜像、容器参数或任何凭据。Revision\nchecksum 由 ``revision_spec_checksum`` 从本对象规范化计算，写入数据库和 Bundle\nmanifest，而不作为可由调用方伪造的自身字段。",
+  "properties": {
+    "agent_id": {
+      "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "budgets": {
+      "$ref": "#/$defs/AgentBudgetV1"
+    },
+    "display_name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Display Name",
+      "type": "string"
+    },
+    "evaluation": {
+      "$ref": "#/$defs/AgentEvaluationConfigV1"
+    },
+    "examples": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Examples",
+      "type": "array"
+    },
+    "instructions": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Instructions",
+      "type": "string"
+    },
+    "model": {
+      "$ref": "#/$defs/AgentModelConfigV1"
+    },
+    "objective": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Objective",
+      "type": "string"
+    },
+    "prohibited_actions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Prohibited Actions",
+      "type": "array"
+    },
+    "retrieval": {
+      "$ref": "#/$defs/AgentRetrievalConfigV1"
+    },
+    "revision_id": {
+      "pattern": "^revision_[a-f0-9]{16,64}$",
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "revision_number": {
+      "maximum": 2147483647,
+      "minimum": 1,
+      "title": "Revision Number",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "muye.ai/agent-revision/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_assets": {
+      "items": {
+        "$ref": "#/$defs/RevisionSourceAssetV1"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Source Assets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_id",
+    "revision_id",
+    "revision_number",
+    "display_name",
+    "objective",
+    "instructions",
+    "prohibited_actions",
+    "examples",
+    "model",
+    "retrieval",
+    "budgets",
+    "source_assets",
+    "evaluation"
+  ],
+  "title": "AgentRevisionSpecV1",
+  "type": "object"
+}

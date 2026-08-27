@@ -1,0 +1,14 @@
+{
+  "schema_version": "muye.ai/chat-stream-event/v1",
+  "event_type": "block_delta",
+  "sequence": 2,
+  "session_id": "session_hotel_0001",
+  "block_id": "block_0123456789abcdef",
+  "delta": "请按员工手册中的流程提交申请。",
+  "tool_call_id": null,
+  "tool_name": null,
+  "citations": [],
+  "error_code": null,
+  "message": null,
+  "total_tokens": null
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": "muye.ai/v2-quality-baseline-input/v1",
+  "baseline_id": "v2_fixture_quality_baseline",
+  "source_revision": "v2_1_fixture_set_20260827",
+  "cases": [
+    {
+      "case_id": "hotel_markdown_leave",
+      "fixture_kind": "markdown",
+      "fixture_id": "hotel_employee_handbook",
+      "expected_outcome": "answer",
+      "actual_outcome": "answer",
+      "relevant_chunk_ids": ["chunk_hotel_annual_leave"],
+      "required_citation_ids": ["citation_hotel_annual_leave"],
+      "returned_citation_ids": ["citation_hotel_annual_leave"],
+      "retrieval": [
+        {"pipeline": "dense", "returned_chunk_ids": ["chunk_hotel_annual_leave"]},
+        {"pipeline": "keyword", "returned_chunk_ids": ["chunk_hotel_annual_leave"]},
+        {"pipeline": "hybrid", "returned_chunk_ids": ["chunk_hotel_annual_leave"]}
+      ],
+      "latency_ms": 220,
+      "input_tokens": 420,
+      "output_tokens": 110
+    },
+    {
+      "case_id": "docling_pdf_evacuation",
+      "fixture_kind": "pdf",
+      "fixture_id": "knowledge_pipeline_pdf",
+      "expected_outcome": "answer",
+      "actual_outcome": "answer",
+      "relevant_chunk_ids": ["chunk_pdf_evacuation"],
+      "required_citation_ids": ["citation_pdf_evacuation"],
+      "returned_citation_ids": ["citation_pdf_evacuation"],
+      "retrieval": [
+        {"pipeline": "dense", "returned_chunk_ids": ["chunk_pdf_evacuation"]},
+        {"pipeline": "keyword", "returned_chunk_ids": ["chunk_pdf_noise", "chunk_pdf_evacuation"]},
+        {"pipeline": "hybrid", "returned_chunk_ids": ["chunk_pdf_evacuation"]}
+      ],
+      "latency_ms": 260,
+      "input_tokens": 460,
+      "output_tokens": 130
+    },
+    {
+      "case_id": "docling_docx_unknown_policy",
+      "fixture_kind": "docx",
+      "fixture_id": "knowledge_pipeline_docx",
+      "expected_outcome": "refusal",
+      "actual_outcome": "refusal",
+      "relevant_chunk_ids": [],
+      "required_citation_ids": [],
+      "returned_citation_ids": [],
+      "retrieval": [
+        {"pipeline": "dense", "returned_chunk_ids": []},
+        {"pipeline": "keyword", "returned_chunk_ids": []},
+        {"pipeline": "hybrid", "returned_chunk_ids": []}
+      ],
+      "latency_ms": 180,
+      "input_tokens": 270,
+      "output_tokens": 42
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version": "muye.ai/runtime-invoke-request/v1",
+  "request_id": "request_0123456789abcdef",
+  "session_id": "session_hotel_0001",
+  "user_id": "usr_hotel_employee",
+  "task": "年假如何申请？"
+}

@@ -1,0 +1,65 @@
+{
+  "schema_version": "muye.ai/agent-revision/v1",
+  "agent_id": "agent_hotel_employee",
+  "revision_id": "revision_0123456789abcdef",
+  "revision_number": 2,
+  "display_name": "酒店员工助手",
+  "objective": "根据已批准资料回答酒店员工制度问题并提供来源引用。",
+  "instructions": "你是酒店员工助手。只根据已批准资料作答；没有资料依据时明确说明无法确认；使用简体中文并给出引用。",
+  "prohibited_actions": [
+    "不得把模型常识冒充资料规定",
+    "不得执行外部系统操作"
+  ],
+  "examples": [
+    "年假如何申请？",
+    "消防疏散时应遵守什么流程？"
+  ],
+  "model": {
+    "chat_alias": "chat_default",
+    "embedding_alias": "embedding_default",
+    "temperature": 0.2
+  },
+  "retrieval": {
+    "pipeline": "hybrid",
+    "top_k": 8,
+    "rerank_alias": null,
+    "minimum_score": 0.0
+  },
+  "budgets": {
+    "output_tokens": 4096,
+    "tool_calls": 4,
+    "timeout_seconds": 60
+  },
+  "source_assets": [
+    {
+      "asset_id": "asset_1111111111111111",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "display_name": "员工手册.md"
+    },
+    {
+      "asset_id": "asset_2222222222222222",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "display_name": "消防手册.pdf"
+    }
+  ],
+  "evaluation": {
+    "cases": [
+      {
+        "case_id": "annual_leave",
+        "question": "年假如何申请？",
+        "expected_source_asset_ids": [
+          "asset_1111111111111111"
+        ]
+      },
+      {
+        "case_id": "fire_evacuation",
+        "question": "消防疏散时应遵守什么流程？",
+        "expected_source_asset_ids": [
+          "asset_2222222222222222"
+        ]
+      }
+    ],
+    "minimum_pass_rate": 0.8,
+    "citation_required": true
+  }
+}

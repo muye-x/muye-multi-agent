@@ -1,0 +1,15 @@
+{
+  "schema_version": "muye.ai/runtime-invoke-response/v1",
+  "request_id": "request_0123456789abcdef",
+  "status": "success",
+  "content": "请按员工手册中的年假申请流程提交申请。",
+  "citations": [
+    {
+      "citation_id": "citation_annual_leave",
+      "source_asset_id": "asset_1111111111111111",
+      "locator": "员工手册.md，第 12 行至第 20 行"
+    }
+  ],
+  "error_code": null,
+  "error_message": null
+}

@@ -1,0 +1,180 @@
+{
+  "$defs": {
+    "RuntimeCitationV1": {
+      "additionalProperties": false,
+      "description": "Runtime 返回给 Core 的最小可审计 citation。",
+      "properties": {
+        "citation_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Citation Id",
+          "type": "string"
+        },
+        "locator": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Locator",
+          "type": "string"
+        },
+        "source_asset_id": {
+          "pattern": "^asset_[a-f0-9]{16,64}$",
+          "title": "Source Asset Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "citation_id",
+        "source_asset_id",
+        "locator"
+      ],
+      "title": "RuntimeCitationV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/chat-stream-event-v1.schema.json",
+  "additionalProperties": false,
+  "description": "Core 到客户端的规范化聊天 SSE 事件。\n\n``event_type`` 同时作为 SSE event 名和 JSON 数据的类型值；``sequence`` 在会话内\n单调递增。工具输入、原始模型思考和内部异常不进入该公开契约。",
+  "properties": {
+    "block_id": {
+      "anyOf": [
+        {
+          "pattern": "^block_[a-f0-9]{16,64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Block Id"
+    },
+    "citations": {
+      "items": {
+        "$ref": "#/$defs/RuntimeCitationV1"
+      },
+      "maxItems": 100,
+      "title": "Citations",
+      "type": "array"
+    },
+    "delta": {
+      "anyOf": [
+        {
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Delta"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "event_type": {
+      "enum": [
+        "session_start",
+        "block_delta",
+        "thinking_delta",
+        "tool_start",
+        "tool_update",
+        "tool_complete",
+        "done",
+        "error",
+        "session_end"
+      ],
+      "title": "Event Type",
+      "type": "string"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    },
+    "schema_version": {
+      "const": "muye.ai/chat-stream-event/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sequence": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "session_id": {
+      "pattern": "^session_[A-Za-z0-9_-]{8,128}$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "tool_call_id": {
+      "anyOf": [
+        {
+          "pattern": "^tool_[a-f0-9]{16,64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Call Id"
+    },
+    "tool_name": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Name"
+    },
+    "total_tokens": {
+      "anyOf": [
+        {
+          "maximum": 65536,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Total Tokens"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_type",
+    "sequence",
+    "session_id"
+  ],
+  "title": "ChatStreamEventV1",
+  "type": "object"
+}

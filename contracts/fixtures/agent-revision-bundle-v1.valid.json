@@ -1,0 +1,17 @@
+{
+  "schema_version": "muye.ai/agent-revision-bundle/v1",
+  "agent_id": "agent_hotel_employee",
+  "revision_id": "revision_0123456789abcdef",
+  "revision_checksum": "3333333333333333333333333333333333333333333333333333333333333333",
+  "bundle_checksum": "4444444444444444444444444444444444444444444444444444444444444444",
+  "build_id": "build_hotel_revision_2",
+  "runtime_contract_version": "muye-runtime/1",
+  "resources": [
+    {
+      "resource_id": "kb.hotel_employee",
+      "collection_name": "kb_hotel_employee_revision_2",
+      "collection_checksum": "5555555555555555555555555555555555555555555555555555555555555555",
+      "embedding_alias": "embedding_default"
+    }
+  ]
+}

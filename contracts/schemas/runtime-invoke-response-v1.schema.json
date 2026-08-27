@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "RuntimeCitationV1": {
+      "additionalProperties": false,
+      "description": "Runtime 返回给 Core 的最小可审计 citation。",
+      "properties": {
+        "citation_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Citation Id",
+          "type": "string"
+        },
+        "locator": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Locator",
+          "type": "string"
+        },
+        "source_asset_id": {
+          "pattern": "^asset_[a-f0-9]{16,64}$",
+          "title": "Source Asset Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "citation_id",
+        "source_asset_id",
+        "locator"
+      ],
+      "title": "RuntimeCitationV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/runtime-invoke-response-v1.schema.json",
+  "additionalProperties": false,
+  "description": "Runtime 的完成态响应；流式调用以同等语义的 ChatStreamEventV1 表达。",
+  "properties": {
+    "citations": {
+      "items": {
+        "$ref": "#/$defs/RuntimeCitationV1"
+      },
+      "maxItems": 100,
+      "title": "Citations",
+      "type": "array"
+    },
+    "content": {
+      "anyOf": [
+        {
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "error_message": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Message"
+    },
+    "request_id": {
+      "pattern": "^request_[a-f0-9]{16,64}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/runtime-invoke-response/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "success",
+        "refused",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "status"
+  ],
+  "title": "RuntimeInvokeResponseV1",
+  "type": "object"
+}

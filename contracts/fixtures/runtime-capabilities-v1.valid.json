@@ -1,0 +1,9 @@
+{
+  "schema_version": "muye.ai/runtime-capabilities/v1",
+  "agent_id": "agent_hotel_employee",
+  "revision_id": "revision_0123456789abcdef",
+  "revision_checksum": "3333333333333333333333333333333333333333333333333333333333333333",
+  "runtime_contract_version": "muye-runtime/1",
+  "supports_streaming": true,
+  "supports_cancel": true
+}

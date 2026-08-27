@@ -3,7 +3,7 @@ name: verify
 on:
   pull_request:
   push:
-    branches: [main, v2.0.x-dev]
+    branches: [main, v2.0.x-dev, v3.0.x-dev]
 
 permissions:
   contents: read
@@ -68,3 +68,19 @@ jobs:
       - run: test -z "$(find . -type d \( -name .codex -o -name .agents -o -name .claude -o -name .cursor -o -name .continue -o -name .pytest_cache -o -name __pycache__ \) -print -quit)"
       - run: test -z "$(find . -type f \( \( -name '.env*' ! -name '.env.example' \) -o -name 'env.example' -o -name '*.db*' -o -name '*.sqlite*' -o -name '*.log*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name '*.crt' \) -print -quit)"
       - run: test -z "$(find . -type f \( -name 'test_fix.py' -o -name 'test_fix_*.py' -o -name 'test_debug.py' -o -name 'test_debug_*.py' -o -name 'test_temp.py' -o -name 'test_temp_*.py' -o -name 'test_tmp.py' -o -name 'test_tmp_*.py' \) -print -quit)"
+
+  v3-phase-zero:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m contracts.export_schemas
+      - run: git diff --exit-code -- contracts/schemas
+      - run: PYTHONPATH=. python -m pytest -q tests/v3
+      - run: PYTHONPATH=. python -m muye_core.migrations.runner plan
+      - run: PYTHONPATH=. python -m tools.v3_baseline --input tests/v3/fixtures/v2-quality-baseline-input.json --output /tmp/v2-quality-baseline-report.json
+      - run: cmp tests/v3/fixtures/v2-quality-baseline-report.json /tmp/v2-quality-baseline-report.json

@@ -1,0 +1,53 @@
+{
+  "$id": "https://muye.ai/schemas/runtime-capabilities-v1.schema.json",
+  "additionalProperties": false,
+  "description": "固定 Runtime 在 readiness 后对 Core 声明的只读能力。",
+  "properties": {
+    "agent_id": {
+      "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "revision_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Revision Checksum",
+      "type": "string"
+    },
+    "revision_id": {
+      "pattern": "^revision_[a-f0-9]{16,64}$",
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "runtime_contract_version": {
+      "const": "muye-runtime/1",
+      "title": "Runtime Contract Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/runtime-capabilities/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "supports_cancel": {
+      "const": true,
+      "title": "Supports Cancel",
+      "type": "boolean"
+    },
+    "supports_streaming": {
+      "const": true,
+      "title": "Supports Streaming",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_id",
+    "revision_id",
+    "revision_checksum",
+    "runtime_contract_version",
+    "supports_streaming",
+    "supports_cancel"
+  ],
+  "title": "RuntimeCapabilitiesV1",
+  "type": "object"
+}

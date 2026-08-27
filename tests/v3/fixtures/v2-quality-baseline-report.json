@@ -1,0 +1,61 @@
+{
+  "baseline_id": "v2_fixture_quality_baseline",
+  "cases": [
+    {
+      "actual_outcome": "answer",
+      "case_id": "hotel_markdown_leave",
+      "expected_outcome": "answer",
+      "fixture_kind": "markdown",
+      "input_tokens": 420,
+      "latency_ms": 220,
+      "output_tokens": 110
+    },
+    {
+      "actual_outcome": "answer",
+      "case_id": "docling_pdf_evacuation",
+      "expected_outcome": "answer",
+      "fixture_kind": "pdf",
+      "input_tokens": 460,
+      "latency_ms": 260,
+      "output_tokens": 130
+    },
+    {
+      "actual_outcome": "refusal",
+      "case_id": "docling_docx_unknown_policy",
+      "expected_outcome": "refusal",
+      "fixture_kind": "docx",
+      "input_tokens": 270,
+      "latency_ms": 180,
+      "output_tokens": 42
+    }
+  ],
+  "input_checksum": "0c62721545996d81808ae727a8719c9349bb53dc1dc12a9eecb2b68eb3e0d61a",
+  "report_checksum": "15b260ac2f85e176bd630f0e6055a8f6045677f2c1ca0c5c47594c711be65c4d",
+  "schema_version": "muye.ai/v2-quality-baseline-report/v1",
+  "source_revision": "v2_1_fixture_set_20260827",
+  "summary": {
+    "case_count": 3,
+    "citation_coverage": 1.0,
+    "mean_latency_ms": 220.0,
+    "pipeline_metrics": {
+      "dense": {
+        "evaluated_cases": 2,
+        "mrr": 1.0,
+        "recall": 1.0
+      },
+      "hybrid": {
+        "evaluated_cases": 2,
+        "mrr": 1.0,
+        "recall": 1.0
+      },
+      "keyword": {
+        "evaluated_cases": 2,
+        "mrr": 0.75,
+        "recall": 1.0
+      }
+    },
+    "refusal_accuracy": 1.0,
+    "total_input_tokens": 1150,
+    "total_output_tokens": 282
+  }
+}

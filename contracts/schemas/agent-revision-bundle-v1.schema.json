@@ -1,0 +1,99 @@
+{
+  "$defs": {
+    "RuntimeResourceBindingV1": {
+      "additionalProperties": false,
+      "description": "Runtime 可读取的逻辑资源与不可变 Collection 映射。",
+      "properties": {
+        "collection_checksum": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Collection Checksum",
+          "type": "string"
+        },
+        "collection_name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+          "title": "Collection Name",
+          "type": "string"
+        },
+        "embedding_alias": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Embedding Alias",
+          "type": "string"
+        },
+        "resource_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "title": "Resource Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource_id",
+        "collection_name",
+        "collection_checksum",
+        "embedding_alias"
+      ],
+      "title": "RuntimeResourceBindingV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://muye.ai/schemas/agent-revision-bundle-v1.schema.json",
+  "additionalProperties": false,
+  "description": "声明式 Runtime Bundle 的无密钥 manifest。",
+  "properties": {
+    "agent_id": {
+      "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "build_id": {
+      "pattern": "^build_[a-z0-9][a-z0-9_-]{2,63}$",
+      "title": "Build Id",
+      "type": "string"
+    },
+    "bundle_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Bundle Checksum",
+      "type": "string"
+    },
+    "resources": {
+      "items": {
+        "$ref": "#/$defs/RuntimeResourceBindingV1"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Resources",
+      "type": "array"
+    },
+    "revision_checksum": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Revision Checksum",
+      "type": "string"
+    },
+    "revision_id": {
+      "pattern": "^revision_[a-f0-9]{16,64}$",
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "runtime_contract_version": {
+      "const": "muye-runtime/1",
+      "title": "Runtime Contract Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "muye.ai/agent-revision-bundle/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_id",
+    "revision_id",
+    "revision_checksum",
+    "bundle_checksum",
+    "build_id",
+    "runtime_contract_version",
+    "resources"
+  ],
+  "title": "AgentRevisionBundleManifestV1",
+  "type": "object"
+}

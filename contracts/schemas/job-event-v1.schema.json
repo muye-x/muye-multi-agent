@@ -1,0 +1,124 @@
+{
+  "$id": "https://muye.ai/schemas/job-event-v1.schema.json",
+  "additionalProperties": false,
+  "description": "可恢复 Job SSE 的一条严格事件。\n\n``sequence`` 在同一 Job 内单调递增；消费者可以以它作为 Last-Event-ID 恢复点。\n字段按事件类型受限，避免将任意日志、路径或异常对象写入事件流。",
+  "properties": {
+    "artifact_ref": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./@:-]{0,255}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Artifact Ref"
+    },
+    "emitted_at": {
+      "title": "Emitted At",
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "event_type": {
+      "enum": [
+        "started",
+        "progress",
+        "artifact",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "Event Type",
+      "type": "string"
+    },
+    "job_id": {
+      "pattern": "^job_[a-f0-9]{16,64}$",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    },
+    "progress_current": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Progress Current"
+    },
+    "progress_total": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Progress Total"
+    },
+    "schema_version": {
+      "const": "muye.ai/job-event/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sequence": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "stage": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+      "title": "Stage",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "job_id",
+    "sequence",
+    "event_type",
+    "emitted_at",
+    "stage"
+  ],
+  "title": "JobEventV1",
+  "type": "object"
+}
