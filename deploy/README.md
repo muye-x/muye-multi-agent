@@ -13,7 +13,7 @@ deploy/
 
 ## 一、镜像推送
 
-### 1.1 需要推送的镜像（7个）
+### 1.1 需要推送的镜像（8个）
 
 | 镜像名 | 说明 |
 |--------|------|
@@ -71,6 +71,9 @@ vim .env  # 填写实际值（密码、token 等）
 # 3. 生成 token（在 .env 中填写）
 openssl rand -hex 32  # 生成 64 位十六进制 token
 
+# 还需要生成 base64 编码的 32 字节微信 Channel 加密密钥
+.venv/bin/python -c "import base64, secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+
 # 4. 启动 Milvus（独立 compose）
 docker compose -f poc/phase1/milvus/compose.yaml up -d
 
@@ -97,13 +100,28 @@ curl http://localhost:8080/gateway/health
 # 预期返回：{"status":"healthy"}
 ```
 
-### 2.3 数据持久化
+### 2.3 微信 Channel 配置
+
+生产 Compose 会启动 `channels`，并通过 Gateway 的已认证 `/api/v2/channels/` 路由提供控制台绑定功能。将以下值加入部署 `.env`：
+
+```dotenv
+MUYE_CHANNELS_CALLER_TOKEN=<独立的 gateway-to-channels token>
+MUYE_CHANNELS_MAIN_TOKEN=<独立的 channels-to-main token>
+MUYE_CHANNELS_ENCRYPTION_KEY=<base64 编码的 32 字节 AES-GCM 密钥>
+WECHAT_ILINK_BASE_URL=https://ilinkai.weixin.qq.com/ilink/bot
+WECHAT_ILINK_ALLOWED_HOSTS=ilinkai.weixin.qq.com
+```
+
+`MUYE_CHANNELS_CALLER_TOKEN` 必须同时供 Gateway 和 channels 使用，`MUYE_CHANNELS_MAIN_TOKEN` 必须同时供 channels 和 Agent Main 使用；两者及加密密钥都不得复用 Control、Gateway 或 SubAgent 的 token。登录控制台，在“微信”页完成二维码确认后再验证消息收发。详见[微信 Channel 接入](../docs/wechat-channel.md)。
+
+### 2.4 数据持久化
 
 | 数据 | Docker Volume | 说明 |
 |------|---------------|------|
 | PostgreSQL | `postgres-data` | 用户、授权、对话历史 |
 | Control State | `control-state` | Catalog、Citation |
 | Milvus | `phase1-milvus` | 知识库向量 |
+| 微信 Channel | PostgreSQL `channel_*` 表 | 绑定、游标、消息和投递状态 |
 
 ---
 
