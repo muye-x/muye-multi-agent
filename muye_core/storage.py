@@ -29,12 +29,14 @@ class ArtifactStore:
     """将上传流原子写入固定根目录的内容寻址存储。"""
 
     def __init__(self, root: Path, *, max_bytes: int = MAX_ASSET_BYTES) -> None:
-        self._root = root.resolve()
+        self._root = root.absolute()
         self._max_bytes = max_bytes
 
     def readiness(self) -> None:
         """验证根目录可创建且不经 symlink 逃逸。"""
 
+        if self._root.is_symlink():
+            raise AssetValidationError("Artifact 根目录必须是普通目录")
         self._root.mkdir(parents=True, exist_ok=True)
         if self._root.is_symlink() or not self._root.is_dir():
             raise AssetValidationError("Artifact 根目录必须是普通目录")
@@ -63,6 +65,8 @@ class ArtifactStore:
             storage_key = f"assets/{checksum[:2]}/{checksum}"
             destination_path = self._root / storage_key
             destination_path.parent.mkdir(parents=True, exist_ok=True)
+            if destination_path.parent.is_symlink() or not destination_path.parent.is_dir():
+                raise AssetValidationError("Asset 目录必须是普通目录")
             if destination_path.exists():
                 if destination_path.is_symlink() or not destination_path.is_file():
                     raise AssetValidationError("目标 Asset 不是普通文件")

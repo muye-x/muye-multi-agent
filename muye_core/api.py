@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import asdict
-from hashlib import sha256
 import logging
 from pathlib import Path
 from secrets import token_hex
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Header, Request, Response, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .models import (
@@ -28,7 +27,7 @@ from .models import (
     SourceUploadResponse,
     UserCreateRequest,
 )
-from .service import DomainError, InMemoryCoreStore, Principal
+from .service import CoreStore, DomainError, Principal
 from .storage import ArtifactStore, AssetValidationError
 
 
@@ -36,11 +35,11 @@ logger = logging.getLogger(__name__)
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)]
 
 
-def create_app(*, store: InMemoryCoreStore | None = None, artifact_root: Path | None = None) -> FastAPI:
-    """创建 v3 API；测试可注入内存仓储，生产适配器以后续阶段替换。"""
+def create_app(*, store: CoreStore, artifact_root: Path) -> FastAPI:
+    """创建 v3 API；生产调用方必须显式注入持久化仓储与 Artifact 根目录。"""
 
-    service = store or InMemoryCoreStore()
-    artifacts = ArtifactStore(artifact_root or Path("/var/lib/muye/artifacts"))
+    service = store
+    artifacts = ArtifactStore(artifact_root)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -50,7 +49,7 @@ def create_app(*, store: InMemoryCoreStore | None = None, artifact_root: Path | 
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Callable):
-        request_id = request.headers.get("X-Request-Id") or f"request_{token_hex(16)}"
+        request_id = _valid_request_id(request.headers.get("X-Request-Id")) or f"request_{token_hex(16)}"
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers["X-Request-Id"] = request_id
@@ -63,6 +62,10 @@ def create_app(*, store: InMemoryCoreStore | None = None, artifact_root: Path | 
     @app.exception_handler(AssetValidationError)
     async def asset_error(request: Request, exc: AssetValidationError) -> JSONResponse:
         return _error("VALIDATION_ERROR", str(exc), _request_id(request), 422)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, _exc: RequestValidationError) -> JSONResponse:
+        return _error("VALIDATION_ERROR", "请求参数无效", _request_id(request), 422)
 
     @app.exception_handler(Exception)
     async def unexpected_error(request: Request, _exc: Exception) -> JSONResponse:
@@ -96,11 +99,6 @@ def create_app(*, store: InMemoryCoreStore | None = None, artifact_root: Path | 
     async def metrics() -> str:
         return "muye_core_up 1\n"
 
-    @app.post("/api/v3/bootstrap/admin", response_model=MeResponse, status_code=201)
-    async def bootstrap(request: UserCreateRequest) -> MeResponse:
-        principal = service.bootstrap_admin(request.username, request.password)
-        return _me(principal)
-
     @app.post("/api/v3/auth/login", response_model=AccessTokenResponse)
     async def login(request: LoginRequest, response: Response) -> AccessTokenResponse:
         tokens = service.login(request.username, request.password)
@@ -125,18 +123,26 @@ def create_app(*, store: InMemoryCoreStore | None = None, artifact_root: Path | 
         return _me(principal)
 
     @app.post("/api/v3/users", response_model=MeResponse, status_code=201)
-    async def create_user(request: UserCreateRequest, _admin: Principal = Depends(require_admin)) -> MeResponse:
-        return _me(service.create_user(request.username, request.password))
+    async def create_user(http_request: Request, request: UserCreateRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        body = request.model_dump(mode="json")
+        result = service.idempotent(
+            f"user-create:{admin.user_id}", key, body,
+            lambda: _audited_create_user(service, admin, body, _request_id(http_request)),
+        )
+        return JSONResponse(result.body, status_code=result.status_code)
 
     @app.put("/api/v3/users/{user_id}/agent-grants")
-    async def replace_grants(user_id: str, request: GrantReplaceRequest, admin: Principal = Depends(require_admin)) -> dict[str, object]:
-        return {"user_id": user_id, "agent_ids": sorted(service.replace_grants(admin, user_id, request.agent_ids))}
+    async def replace_grants(http_request: Request, user_id: str, request: GrantReplaceRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        body = request.model_dump(mode="json")
+        result = service.idempotent(f"grant-replace:{admin.user_id}:{user_id}", key, body, lambda: _audited_grants(service, admin, user_id, request.agent_ids, _request_id(http_request)))
+        return JSONResponse(result.body, status_code=result.status_code)
 
     @app.post("/api/v3/agents", response_model=None, status_code=201)
-    async def create_agent(request: AgentCreateRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+    async def create_agent(http_request: Request, request: AgentCreateRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
         body = request.model_dump(mode="json")
         def create() -> tuple[int, dict[str, object]]:
             agent, draft = service.create_agent(admin, **body)
+            service.audit(actor_id=admin.user_id, action="create_agent", target_type="agent", target_id=agent.agent_id, request_id=_request_id(http_request))
             return 201, _detail(agent, draft)
         result = service.idempotent(f"agent-create:{admin.user_id}", key, body, create)
         return JSONResponse(result.body, status_code=result.status_code)
@@ -153,41 +159,46 @@ def create_app(*, store: InMemoryCoreStore | None = None, artifact_root: Path | 
         return AgentDetail.model_validate(_detail(*service.agent_detail(agent_id)))
 
     @app.patch("/api/v3/agents/{agent_id}/draft", response_model=None)
-    async def patch_draft(agent_id: str, request: DraftPatchRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+    async def patch_draft(http_request: Request, agent_id: str, request: DraftPatchRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
         body = request.model_dump(mode="json")
         result = service.idempotent(
             f"draft-patch:{agent_id}", key, body,
-            lambda: (200, _draft(service.patch_draft(admin, agent_id, request.version, request.config))),
+            lambda: _patch_draft(service, admin, agent_id, request, _request_id(http_request)),
         )
         return JSONResponse(result.body, status_code=result.status_code)
 
     @app.delete("/api/v3/agents/{agent_id}/draft", status_code=204)
-    async def discard_draft(agent_id: str, admin: Principal = Depends(require_admin)) -> Response:
-        service.discard_draft(admin, agent_id)
+    async def discard_draft(http_request: Request, agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> Response:
+        service.idempotent(f"draft-discard:{admin.user_id}:{agent_id}", key, {}, lambda: _discard_draft(service, admin, agent_id, _request_id(http_request)))
         return Response(status_code=204)
 
     @app.post("/api/v3/agents/{agent_id}/stop", response_model=None)
-    async def stop_agent(agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
-        result = service.idempotent(f"agent-stop:{agent_id}", key, {}, lambda: (200, _summary(service.suspend(admin, agent_id)).model_dump(mode="json")))
+    async def stop_agent(http_request: Request, agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        result = service.idempotent(f"agent-stop:{admin.user_id}:{agent_id}", key, {}, lambda: _agent_action(service, admin, agent_id, "stop_agent", service.suspend, _request_id(http_request)))
         return JSONResponse(result.body, status_code=result.status_code)
 
     @app.post("/api/v3/agents/{agent_id}/archive", response_model=None)
-    async def archive_agent(agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
-        result = service.idempotent(f"agent-archive:{agent_id}", key, {}, lambda: (200, _summary(service.archive(admin, agent_id)).model_dump(mode="json")))
+    async def archive_agent(http_request: Request, agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        result = service.idempotent(f"agent-archive:{admin.user_id}:{agent_id}", key, {}, lambda: _agent_action(service, admin, agent_id, "archive_agent", service.archive, _request_id(http_request)))
         return JSONResponse(result.body, status_code=result.status_code)
 
     @app.post("/api/v3/agents/{agent_id}/restore", response_model=None)
-    async def restore_agent(agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
-        result = service.idempotent(f"agent-restore:{agent_id}", key, {}, lambda: (200, _summary(service.restore(admin, agent_id)).model_dump(mode="json")))
+    async def restore_agent(http_request: Request, agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        result = service.idempotent(f"agent-restore:{admin.user_id}:{agent_id}", key, {}, lambda: _agent_action(service, admin, agent_id, "restore_agent", service.restore, _request_id(http_request)))
         return JSONResponse(result.body, status_code=result.status_code)
 
     @app.post("/api/v3/agents/{agent_id}/sources", response_model=SourceUploadResponse, status_code=201)
-    async def upload_source(agent_id: str, file: UploadFile = File(...), _admin: Principal = Depends(require_admin)) -> SourceUploadResponse:
+    async def upload_source(http_request: Request, agent_id: str, file: UploadFile = File(...), key: IdempotencyKey = None, admin: Principal = Depends(require_admin)) -> SourceUploadResponse:
+        if key is None:
+            raise DomainError("VALIDATION_ERROR", "缺少 Idempotency-Key", status_code=422)
         service.agent_detail(agent_id)
         if file.content_type not in {"text/plain", "text/markdown", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}:
             raise DomainError("VALIDATION_ERROR", "不支持的文件类型", status_code=422)
+        # UploadFile 已由 Starlette 落入受限临时文件；ArtifactStore 仍按固定块读取。
         stored = artifacts.store(file.file, filename=file.filename or "")
-        return SourceUploadResponse(asset_id=f"asset_{stored.sha256[:16]}", sha256=stored.sha256, size_bytes=stored.size_bytes, media_type=file.content_type, display_name=file.filename or "", reused=stored.reused)
+        body = {"sha256": stored.sha256, "size_bytes": stored.size_bytes, "media_type": file.content_type, "storage_key": stored.storage_key, "display_name": file.filename or ""}
+        result = service.idempotent(f"asset-upload:{admin.user_id}:{agent_id}", key, body, lambda: _attach_asset(service, admin, agent_id, body, _request_id(http_request), stored.reused))
+        return SourceUploadResponse.model_validate(result.body)
 
     return app
 
@@ -200,7 +211,13 @@ def _bearer_token(authorization: str | None) -> str:
 def _request_id(request: Request) -> str:
     """为错误响应保留调用方相关 ID，成功响应由后续持久化中间件统一覆盖。"""
 
-    return request.headers.get("X-Request-Id") or f"request_{token_hex(16)}"
+    return _valid_request_id(request.headers.get("X-Request-Id")) or f"request_{token_hex(16)}"
+
+
+def _valid_request_id(value: str | None) -> str | None:
+    if value and value.startswith("request_") and len(value) == 40 and all(character in "0123456789abcdef" for character in value[8:]):
+        return value
+    return None
 
 
 def _error(code: str, message: str, request_id: str, status_code: int) -> JSONResponse:
@@ -224,3 +241,39 @@ def _detail(agent: object, draft: object | None) -> dict[str, object]:
     payload = _summary(agent).model_dump(mode="json")
     payload["draft"] = _draft(draft) if draft else None
     return payload
+
+
+def _audited_create_user(service: CoreStore, admin: Principal, body: dict[str, object], request_id: str) -> tuple[int, dict[str, object]]:
+    principal = service.create_user(str(body["username"]), str(body["password"]))
+    service.audit(actor_id=admin.user_id, action="create_user", target_type="user", target_id=principal.user_id, request_id=request_id)
+    return 201, _me(principal).model_dump(mode="json")
+
+
+def _audited_grants(service: CoreStore, admin: Principal, user_id: str, agent_ids: list[str], request_id: str) -> tuple[int, dict[str, object]]:
+    grants = service.replace_grants(admin, user_id, agent_ids)
+    service.audit(actor_id=admin.user_id, action="replace_agent_grants", target_type="user", target_id=user_id, request_id=request_id, details={"agent_count": len(grants)})
+    return 200, {"user_id": user_id, "agent_ids": sorted(grants)}
+
+
+def _patch_draft(service: CoreStore, admin: Principal, agent_id: str, request: DraftPatchRequest, request_id: str) -> tuple[int, dict[str, object]]:
+    result = _draft(service.patch_draft(admin, agent_id, request.version, request.config))
+    service.audit(actor_id=admin.user_id, action="update_draft", target_type="agent", target_id=agent_id, request_id=request_id)
+    return 200, result
+
+
+def _discard_draft(service: CoreStore, admin: Principal, agent_id: str, request_id: str) -> tuple[int, dict[str, object]]:
+    service.discard_draft(admin, agent_id)
+    service.audit(actor_id=admin.user_id, action="discard_draft", target_type="agent", target_id=agent_id, request_id=request_id)
+    return 204, {}
+
+
+def _agent_action(service: CoreStore, admin: Principal, agent_id: str, action: str, operation: Callable[[Principal, str], object], request_id: str) -> tuple[int, dict[str, object]]:
+    agent = operation(admin, agent_id)
+    service.audit(actor_id=admin.user_id, action=action, target_type="agent", target_id=agent_id, request_id=request_id)
+    return 200, _summary(agent).model_dump(mode="json")
+
+
+def _attach_asset(service: CoreStore, admin: Principal, agent_id: str, body: dict[str, object], request_id: str, reused: bool) -> tuple[int, dict[str, object]]:
+    asset_id, already_registered = service.attach_asset(admin, agent_id, **body)
+    service.audit(actor_id=admin.user_id, action="upload_source", target_type="asset", target_id=asset_id, request_id=request_id, details={"agent_id": agent_id, "sha256": body["sha256"], "reused": reused or already_registered})
+    return 201, {"asset_id": asset_id, "sha256": body["sha256"], "size_bytes": body["size_bytes"], "media_type": body["media_type"], "display_name": body["display_name"], "reused": reused or already_registered}

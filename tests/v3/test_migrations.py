@@ -71,7 +71,7 @@ def test_phase_one_migration_plan_contains_the_core_schema() -> None:
 
     migrations = discover_migrations()
 
-    assert [(migration.version, migration.name) for migration in migrations] == [(1, "phase1_core")]
+    assert [(migration.version, migration.name) for migration in migrations] == [(1, "phase1_core"), (2, "phase1_constraints")]
 
 
 def test_migrations_are_ordered_and_checksums_are_stable(tmp_path: Path) -> None:

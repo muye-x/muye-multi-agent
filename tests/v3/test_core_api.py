@@ -16,14 +16,16 @@ from muye_core.storage import ArtifactStore, AssetValidationError
 def client(tmp_path: Path):
     """每个测试隔离 API 状态与 Artifact 根目录。"""
 
-    application = create_app(store=InMemoryCoreStore(), artifact_root=tmp_path / "artifacts")
+    store = InMemoryCoreStore()
+    application = create_app(store=store, artifact_root=tmp_path / "artifacts")
     transport = httpx.ASGITransport(app=application)
-    return httpx.AsyncClient(transport=transport, base_url="http://test")
+    result = httpx.AsyncClient(transport=transport, base_url="http://test")
+    result._core_store = store
+    return result
 
 
 async def _admin(client: httpx.AsyncClient) -> dict[str, str]:
-    response = await client.post("/api/v3/bootstrap/admin", json={"username": "admin", "password": "correct-horse-battery"})
-    assert response.status_code == 201
+    client._core_store.bootstrap_admin("admin", "correct-horse-battery")
     login = await client.post("/api/v3/auth/login", json={"username": "admin", "password": "correct-horse-battery"})
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
@@ -75,3 +77,25 @@ def test_artifact_store_reuses_content_and_rejects_unsafe_names(tmp_path: Path) 
         store.store(io.BytesIO(b"x"), filename="../escape.md")
     with pytest.raises(AssetValidationError, match="大小上限"):
         store.store(io.BytesIO(b"large"), filename="large.md")
+    root_target = tmp_path / "target"
+    root_target.mkdir()
+    linked_root = tmp_path / "linked-artifacts"
+    linked_root.symlink_to(root_target, target_is_directory=True)
+    with pytest.raises(AssetValidationError, match="普通目录"):
+        ArtifactStore(linked_root).readiness()
+
+
+@pytest.mark.anyio
+async def test_validation_error_is_normalized_and_upload_binds_draft(client: httpx.AsyncClient) -> None:
+    invalid = await client.post("/api/v3/auth/login", json={})
+    assert invalid.status_code == 422
+    assert invalid.json()["code"] == "VALIDATION_ERROR"
+    assert invalid.json()["request_id"].startswith("request_")
+    headers = await _admin(client)
+    headers["Idempotency-Key"] = "create-agent-0004"
+    created = await client.post("/api/v3/agents", json={"slug": "upload-help", "display_name": "上传助手", "description": "回答资料", "config": {}}, headers=headers)
+    headers["Idempotency-Key"] = "upload-source-0001"
+    uploaded = await client.post(f"/api/v3/agents/{created.json()['agent_id']}/sources", headers=headers, files={"file": ("handbook.md", b"# handbook", "text/markdown")})
+    assert uploaded.status_code == 201
+    assert uploaded.json()["asset_id"].startswith("asset_")
+    assert client._core_store._draft_sources[created.json()["agent_id"]][0]["asset_id"] == uploaded.json()["asset_id"]

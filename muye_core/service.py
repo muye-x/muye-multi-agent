@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
 from threading import RLock
+from typing import Any, Callable
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
@@ -79,6 +80,18 @@ class IdempotentResponse:
     body: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class AuditEvent:
+    """不含凭据或资料正文的追加审计投影。"""
+
+    actor_id: str | None
+    action: str
+    target_type: str
+    target_id: str
+    request_id: str
+    details: dict[str, object]
+
+
 class CoreStore:
     """阶段 1 服务所需的最小持久化接口。"""
 
@@ -102,6 +115,9 @@ class InMemoryCoreStore(CoreStore):
         self._drafts: dict[str, DraftRecord] = {}
         self._grants: dict[str, frozenset[str]] = {}
         self._idempotency: dict[tuple[str, str], IdempotentResponse] = {}
+        self._assets: dict[str, dict[str, object]] = {}
+        self._draft_sources: dict[str, list[dict[str, object]]] = {}
+        self._audit_events: list[AuditEvent] = []
         self._lock = RLock()
 
     def readiness(self) -> None:
@@ -241,10 +257,32 @@ class InMemoryCoreStore(CoreStore):
             if agent.archived_at is None:
                 raise DomainError("CONFLICT", "Agent 尚未归档")
             agent.archived_at = None
-            agent.suspended_at = None
             return agent
 
-    def idempotent(self, scope: str, key: str, request_body: dict[str, object], create: callable) -> IdempotentResponse:
+    def attach_asset(self, actor: Principal, agent_id: str, *, sha256: str, size_bytes: int, media_type: str, storage_key: str, display_name: str) -> tuple[str, bool]:
+        """登记内容寻址 Asset，并将其绑定到当前开放 Draft。"""
+
+        self._admin(actor)
+        with self._lock:
+            agent, draft = self.agent_detail(agent_id)
+            if agent.archived_at or agent.suspended_at or draft is None:
+                raise DomainError("CONFLICT", "Agent 当前不能接收资料")
+            asset_id = f"asset_{sha256[:16]}"
+            reused = asset_id in self._assets
+            self._assets.setdefault(asset_id, {"sha256": sha256, "size_bytes": size_bytes, "media_type": media_type, "storage_key": storage_key})
+            sources = self._draft_sources.setdefault(agent_id, [])
+            if not any(source["asset_id"] == asset_id for source in sources):
+                sources.append({"asset_id": asset_id, "display_name": display_name, "sort_order": len(sources)})
+                draft.version += 1
+            return asset_id, reused
+
+    def audit(self, *, actor_id: str | None, action: str, target_type: str, target_id: str, request_id: str, details: dict[str, object] | None = None) -> None:
+        """记录已经脱敏的领域写操作；调用方不得传入密码、Token 或资料正文。"""
+
+        with self._lock:
+            self._audit_events.append(AuditEvent(actor_id, action, target_type, target_id, request_id, details or {}))
+
+    def idempotent(self, scope: str, key: str, request_body: dict[str, object], create: Callable[[], tuple[int, dict[str, object]]]) -> IdempotentResponse:
         checksum = _hash_json(request_body)
         with self._lock:
             previous = self._idempotency.get((scope, key))
