@@ -32,6 +32,299 @@
   },
   "$id": "https://muye.ai/schemas/chat-stream-event-v1.schema.json",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "session_start"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "citations": false,
+          "delta": false,
+          "error_code": false,
+          "message": false,
+          "tool_call_id": false,
+          "tool_name": false,
+          "total_tokens": false
+        },
+        "required": []
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "block_delta"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "citations": false,
+          "delta": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "error_code": false,
+          "message": false,
+          "tool_call_id": false,
+          "tool_name": false,
+          "total_tokens": false
+        },
+        "required": [
+          "block_id",
+          "delta"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "thinking_delta"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "citations": false,
+          "delta": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "error_code": false,
+          "message": false,
+          "tool_call_id": false,
+          "tool_name": false,
+          "total_tokens": false
+        },
+        "required": [
+          "delta"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "tool_start"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "citations": false,
+          "delta": false,
+          "error_code": false,
+          "message": false,
+          "tool_call_id": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "tool_name": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "total_tokens": false
+        },
+        "required": [
+          "tool_call_id",
+          "tool_name"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "tool_update"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "citations": false,
+          "delta": false,
+          "error_code": false,
+          "message": false,
+          "tool_call_id": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "tool_name": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "total_tokens": false
+        },
+        "required": [
+          "tool_call_id",
+          "tool_name"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "tool_complete"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "citations": false,
+          "delta": false,
+          "error_code": false,
+          "message": false,
+          "tool_call_id": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "tool_name": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "total_tokens": false
+        },
+        "required": [
+          "tool_call_id",
+          "tool_name"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "done"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "delta": false,
+          "error_code": false,
+          "message": false,
+          "tool_call_id": false,
+          "tool_name": false,
+          "total_tokens": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "total_tokens"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "error"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "citations": false,
+          "delta": false,
+          "error_code": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "message": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "tool_call_id": false,
+          "tool_name": false,
+          "total_tokens": false
+        },
+        "required": [
+          "error_code",
+          "message"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "session_end"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "block_id": false,
+          "citations": false,
+          "delta": false,
+          "error_code": false,
+          "message": false,
+          "tool_call_id": false,
+          "tool_name": false,
+          "total_tokens": false
+        },
+        "required": []
+      }
+    }
+  ],
   "description": "Core 到客户端的规范化聊天 SSE 事件。\n\n``event_type`` 同时作为 SSE event 名和 JSON 数据的类型值；``sequence`` 在会话内\n单调递增。工具输入、原始模型思考和内部异常不进入该公开契约。",
   "properties": {
     "block_id": {

@@ -37,7 +37,7 @@
   },
   "$id": "https://muye.ai/schemas/agent-revision-bundle-v1.schema.json",
   "additionalProperties": false,
-  "description": "声明式 Runtime Bundle 的无密钥 manifest。",
+  "description": "声明式 Runtime Bundle 的无密钥 manifest。\n\n``bundle_checksum`` 是 Bundle 的规范内容 hash，不是 tar/zstd 文件的字节 hash。\n它覆盖不含自身字段的 manifest 和固定 Bundle 成员，计算规则由\n:func:`revision_bundle_checksum` 定义。",
   "properties": {
     "agent_id": {
       "pattern": "^agent_[a-z0-9][a-z0-9_-]{2,63}$",

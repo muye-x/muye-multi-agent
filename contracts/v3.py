@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from hashlib import sha256
 import json
 import re
-from typing import Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -182,7 +183,12 @@ class RuntimeResourceBindingV1(ContractModel):
 
 
 class AgentRevisionBundleManifestV1(ContractModel):
-    """声明式 Runtime Bundle 的无密钥 manifest。"""
+    """声明式 Runtime Bundle 的无密钥 manifest。
+
+    ``bundle_checksum`` 是 Bundle 的规范内容 hash，不是 tar/zstd 文件的字节 hash。
+    它覆盖不含自身字段的 manifest 和固定 Bundle 成员，计算规则由
+    :func:`revision_bundle_checksum` 定义。
+    """
 
     schema_version: Literal["muye.ai/agent-revision-bundle/v1"]
     agent_id: str = Field(pattern=AGENT_ID_PATTERN)
@@ -201,6 +207,40 @@ class AgentRevisionBundleManifestV1(ContractModel):
         if len(set(resource_ids)) != len(resource_ids):
             raise ValueError("resources 的 resource_id 不能重复")
         return self
+
+
+_BUNDLE_MEMBER_PATHS = frozenset(
+    {"revision.json", "resource-snapshot.json", "evaluation-summary.json"}
+)
+
+
+def revision_bundle_checksum(
+    manifest: AgentRevisionBundleManifestV1,
+    members: Mapping[str, bytes],
+) -> str:
+    """计算声明式 Bundle 的跨语言稳定 checksum。
+
+    计算值为 ``manifest`` 去除 ``bundle_checksum`` 后的规范 JSON，与三个固定成员的
+    原始字节 SHA-256 组成的规范 JSON 的 SHA-256。压缩格式、文件时间戳和成员写入顺序
+    因而不会影响结果；调用方必须在读取任意成员前比对返回值与 manifest 中的 checksum。
+    """
+
+    member_paths = set(members)
+    if member_paths != _BUNDLE_MEMBER_PATHS:
+        raise ValueError(
+            "Bundle 必须且只能包含 revision.json、resource-snapshot.json 和 evaluation-summary.json"
+        )
+    if any(not isinstance(content, bytes) for content in members.values()):
+        raise ValueError("Bundle 成员必须是原始 bytes")
+    return _canonical_checksum(
+        {
+            "manifest": manifest.model_dump(mode="json", exclude={"bundle_checksum"}),
+            "members": {
+                path: sha256(members[path]).hexdigest()
+                for path in sorted(member_paths)
+            },
+        }
+    )
 
 
 class JobEventV1(ContractModel):
@@ -222,6 +262,23 @@ class JobEventV1(ContractModel):
     artifact_ref: str | None = Field(default=None, max_length=256, pattern=SAFE_REFERENCE_PATTERN)
     error_code: str | None = Field(default=None, max_length=128, pattern=IDENTIFIER_PATTERN)
 
+    _EVENT_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"progress_current", "progress_total", "artifact_ref", "error_code"}
+    )
+    _EVENT_PAYLOADS: ClassVar[
+        dict[str, tuple[frozenset[str], frozenset[str]]]
+    ] = {
+        "started": (frozenset(), frozenset()),
+        "progress": (
+            frozenset({"progress_current", "progress_total"}),
+            frozenset({"progress_current", "progress_total"}),
+        ),
+        "artifact": (frozenset({"artifact_ref"}), frozenset({"artifact_ref"})),
+        "completed": (frozenset(), frozenset()),
+        "failed": (frozenset({"error_code"}), frozenset({"error_code"})),
+        "cancelled": (frozenset(), frozenset()),
+    }
+
     @field_validator("emitted_at")
     @classmethod
     def validate_emitted_at(cls, value: str) -> str:
@@ -242,21 +299,34 @@ class JobEventV1(ContractModel):
     def validate_event_payload(self) -> "JobEventV1":
         """为每个事件类型限定必要字段和禁止字段。"""
 
-        has_progress = self.progress_current is not None or self.progress_total is not None
-        if has_progress:
-            if self.progress_current is None or self.progress_total is None:
-                raise ValueError("progress 事件必须同时包含 progress_current 和 progress_total")
-            if self.progress_current > self.progress_total:
-                raise ValueError("progress_current 不能大于 progress_total")
-        if self.event_type == "progress" and not has_progress:
-            raise ValueError("progress 事件必须包含进度")
-        if self.event_type == "artifact" and self.artifact_ref is None:
-            raise ValueError("artifact 事件必须包含 artifact_ref")
-        if self.event_type == "failed" and self.error_code is None:
-            raise ValueError("failed 事件必须包含 error_code")
-        if self.event_type in {"completed", "cancelled"} and self.error_code is not None:
-            raise ValueError("completed/cancelled 事件不能包含 error_code")
+        required_fields, allowed_fields = self._EVENT_PAYLOADS[self.event_type]
+        missing_fields = [field for field in sorted(required_fields) if getattr(self, field) is None]
+        if missing_fields:
+            raise ValueError(f"{self.event_type} 事件必须包含：{', '.join(missing_fields)}")
+        forbidden_fields = self._EVENT_FIELDS - allowed_fields
+        present_fields = sorted(forbidden_fields.intersection(self.model_fields_set))
+        if present_fields:
+            raise ValueError(f"{self.event_type} 事件不能包含：{', '.join(present_fields)}")
+        if (
+            self.event_type == "progress"
+            and self.progress_current is not None
+            and self.progress_total is not None
+            and self.progress_current > self.progress_total
+        ):
+            raise ValueError("progress_current 不能大于 progress_total")
         return self
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        core_schema: Any,
+        handler: Any,
+    ) -> dict[str, Any]:
+        """将判别事件的互斥字段规则同步到 JSON Schema。"""
+
+        schema = handler(core_schema)
+        schema["allOf"] = _event_schema_conditions(cls._EVENT_FIELDS, cls._EVENT_PAYLOADS)
+        return schema
 
 
 class RuntimeCitationV1(ContractModel):
@@ -353,22 +423,95 @@ class ChatStreamEventV1(ContractModel):
     message: str | None = Field(default=None, min_length=1, max_length=1_000)
     total_tokens: int | None = Field(default=None, ge=0, le=65_536)
 
+    _EVENT_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "block_id",
+            "delta",
+            "tool_call_id",
+            "tool_name",
+            "citations",
+            "error_code",
+            "message",
+            "total_tokens",
+        }
+    )
+    _EVENT_PAYLOADS: ClassVar[
+        dict[str, tuple[frozenset[str], frozenset[str]]]
+    ] = {
+        "session_start": (frozenset(), frozenset()),
+        "block_delta": (
+            frozenset({"block_id", "delta"}),
+            frozenset({"block_id", "delta"}),
+        ),
+        "thinking_delta": (frozenset({"delta"}), frozenset({"delta"})),
+        "tool_start": (
+            frozenset({"tool_call_id", "tool_name"}),
+            frozenset({"tool_call_id", "tool_name"}),
+        ),
+        "tool_update": (
+            frozenset({"tool_call_id", "tool_name"}),
+            frozenset({"tool_call_id", "tool_name"}),
+        ),
+        "tool_complete": (
+            frozenset({"tool_call_id", "tool_name"}),
+            frozenset({"tool_call_id", "tool_name"}),
+        ),
+        "done": (frozenset({"total_tokens"}), frozenset({"citations", "total_tokens"})),
+        "error": (
+            frozenset({"error_code", "message"}),
+            frozenset({"error_code", "message"}),
+        ),
+        "session_end": (frozenset(), frozenset()),
+    }
+
     @model_validator(mode="after")
     def validate_event_payload(self) -> "ChatStreamEventV1":
-        """拒绝不完整 delta、工具和错误事件，保证客户端可确定性消费。"""
+        """拒绝跨事件字段混入，保证客户端可判别地消费流。"""
 
-        if self.event_type == "block_delta" and (self.block_id is None or self.delta is None):
-            raise ValueError("block_delta 必须包含 block_id 和 delta")
-        if self.event_type == "thinking_delta" and self.delta is None:
-            raise ValueError("thinking_delta 必须包含 delta")
-        if self.event_type in {"tool_start", "tool_update", "tool_complete"}:
-            if self.tool_call_id is None or self.tool_name is None:
-                raise ValueError("工具事件必须包含 tool_call_id 和 tool_name")
-        if self.event_type == "error" and (self.error_code is None or self.message is None):
-            raise ValueError("error 事件必须包含 error_code 和 message")
-        if self.event_type == "done" and self.total_tokens is None:
-            raise ValueError("done 事件必须包含 total_tokens")
+        required_fields, allowed_fields = self._EVENT_PAYLOADS[self.event_type]
+        missing_fields = [field for field in sorted(required_fields) if getattr(self, field) is None]
+        if missing_fields:
+            raise ValueError(f"{self.event_type} 事件必须包含：{', '.join(missing_fields)}")
+        forbidden_fields = self._EVENT_FIELDS - allowed_fields
+        present_fields = sorted(forbidden_fields.intersection(self.model_fields_set))
+        if present_fields:
+            raise ValueError(f"{self.event_type} 事件不能包含：{', '.join(present_fields)}")
         return self
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        core_schema: Any,
+        handler: Any,
+    ) -> dict[str, Any]:
+        """将 SSE 判别联合字段规则同步到 JSON Schema。"""
+
+        schema = handler(core_schema)
+        schema["allOf"] = _event_schema_conditions(cls._EVENT_FIELDS, cls._EVENT_PAYLOADS)
+        return schema
+
+
+def _event_schema_conditions(
+    event_fields: frozenset[str],
+    payloads: Mapping[str, tuple[frozenset[str], frozenset[str]]],
+) -> list[dict[str, object]]:
+    """生成 JSON Schema 的 if/then 分支，镜像 Pydantic 的事件判别规则。"""
+
+    conditions: list[dict[str, object]] = []
+    for event_type, (required_fields, allowed_fields) in payloads.items():
+        forbidden_fields = event_fields - allowed_fields
+        properties: dict[str, object] = {field: False for field in forbidden_fields}
+        properties.update({field: {"not": {"type": "null"}} for field in required_fields})
+        conditions.append(
+            {
+                "if": {
+                    "properties": {"event_type": {"const": event_type}},
+                    "required": ["event_type"],
+                },
+                "then": {"properties": properties, "required": sorted(required_fields)},
+            }
+        )
+    return conditions
 
 
 V3_CONTRACT_SCHEMA_MODELS: dict[str, type[ContractModel]] = {

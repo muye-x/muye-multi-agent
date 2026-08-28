@@ -77,19 +77,44 @@ export interface AgentRevisionBundleManifestV1 {
   resources: RuntimeResourceBindingV1[];
 }
 
-export interface JobEventV1 {
+interface JobEventBaseV1 {
   schema_version: "muye.ai/job-event/v1";
   job_id: string;
   sequence: number;
-  event_type: "started" | "progress" | "artifact" | "completed" | "failed" | "cancelled";
   emitted_at: string;
   stage: string;
   message?: string | null;
-  progress_current?: number | null;
-  progress_total?: number | null;
-  artifact_ref?: string | null;
-  error_code?: string | null;
 }
+
+export type JobEventV1 =
+  | (JobEventBaseV1 & {
+      event_type: "started" | "completed" | "cancelled";
+      progress_current?: never;
+      progress_total?: never;
+      artifact_ref?: never;
+      error_code?: never;
+    })
+  | (JobEventBaseV1 & {
+      event_type: "progress";
+      progress_current: number;
+      progress_total: number;
+      artifact_ref?: never;
+      error_code?: never;
+    })
+  | (JobEventBaseV1 & {
+      event_type: "artifact";
+      artifact_ref: string;
+      progress_current?: never;
+      progress_total?: never;
+      error_code?: never;
+    })
+  | (JobEventBaseV1 & {
+      event_type: "failed";
+      error_code: string;
+      progress_current?: never;
+      progress_total?: never;
+      artifact_ref?: never;
+    });
 
 export interface RuntimeCitationV1 {
   citation_id: string;
@@ -131,17 +156,76 @@ export interface RuntimeCapabilitiesV1 {
   supports_cancel: true;
 }
 
-export interface ChatStreamEventV1 {
+interface ChatStreamEventBaseV1 {
   schema_version: "muye.ai/chat-stream-event/v1";
-  event_type: "session_start" | "block_delta" | "thinking_delta" | "tool_start" | "tool_update" | "tool_complete" | "done" | "error" | "session_end";
   sequence: number;
   session_id: string;
-  block_id?: string | null;
-  delta?: string | null;
-  tool_call_id?: string | null;
-  tool_name?: string | null;
-  citations?: RuntimeCitationV1[];
-  error_code?: string | null;
-  message?: string | null;
-  total_tokens?: number | null;
 }
+
+export type ChatStreamEventV1 =
+  | (ChatStreamEventBaseV1 & {
+      event_type: "session_start" | "session_end";
+      block_id?: never;
+      delta?: never;
+      tool_call_id?: never;
+      tool_name?: never;
+      citations?: never;
+      error_code?: never;
+      message?: never;
+      total_tokens?: never;
+    })
+  | (ChatStreamEventBaseV1 & {
+      event_type: "block_delta";
+      block_id: string;
+      delta: string;
+      tool_call_id?: never;
+      tool_name?: never;
+      citations?: never;
+      error_code?: never;
+      message?: never;
+      total_tokens?: never;
+    })
+  | (ChatStreamEventBaseV1 & {
+      event_type: "thinking_delta";
+      delta: string;
+      block_id?: never;
+      tool_call_id?: never;
+      tool_name?: never;
+      citations?: never;
+      error_code?: never;
+      message?: never;
+      total_tokens?: never;
+    })
+  | (ChatStreamEventBaseV1 & {
+      event_type: "tool_start" | "tool_update" | "tool_complete";
+      tool_call_id: string;
+      tool_name: string;
+      block_id?: never;
+      delta?: never;
+      citations?: never;
+      error_code?: never;
+      message?: never;
+      total_tokens?: never;
+    })
+  | (ChatStreamEventBaseV1 & {
+      event_type: "done";
+      total_tokens: number;
+      citations?: RuntimeCitationV1[];
+      block_id?: never;
+      delta?: never;
+      tool_call_id?: never;
+      tool_name?: never;
+      error_code?: never;
+      message?: never;
+    })
+  | (ChatStreamEventBaseV1 & {
+      event_type: "error";
+      error_code: string;
+      message: string;
+      block_id?: never;
+      delta?: never;
+      tool_call_id?: never;
+      tool_name?: never;
+      citations?: never;
+      total_tokens?: never;
+    });

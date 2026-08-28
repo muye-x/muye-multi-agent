@@ -28,6 +28,7 @@ from contracts.v3 import (
     RuntimeInvokeRequestV1,
     RuntimeInvokeResponseV1,
     RuntimeResourceBindingV1,
+    revision_bundle_checksum,
     revision_spec_checksum,
 )
 
@@ -46,13 +47,11 @@ TYPESCRIPT_INTERFACE_MODELS: dict[str, type[BaseModel]] = {
     "AgentRevisionSpecV1": AgentRevisionSpecV1,
     "RuntimeResourceBindingV1": RuntimeResourceBindingV1,
     "AgentRevisionBundleManifestV1": AgentRevisionBundleManifestV1,
-    "JobEventV1": JobEventV1,
     "RuntimeCitationV1": RuntimeCitationV1,
     "RuntimeInvokeRequestV1": RuntimeInvokeRequestV1,
     "RuntimeInvokeResponseV1": RuntimeInvokeResponseV1,
     "RuntimeCancelRequestV1": RuntimeCancelRequestV1,
     "RuntimeCapabilitiesV1": RuntimeCapabilitiesV1,
-    "ChatStreamEventV1": ChatStreamEventV1,
 }
 
 
@@ -98,7 +97,7 @@ def test_valid_fixtures_match_v3_contract(schema_name: str) -> None:
         (
             "job-event-v1",
             lambda payload: payload.update({"event_type": "failed", "error_code": None}),
-            "failed 事件必须包含 error_code",
+            "failed 事件必须包含：error_code",
         ),
         (
             "runtime-invoke-response-v1",
@@ -115,7 +114,17 @@ def test_valid_fixtures_match_v3_contract(schema_name: str) -> None:
         (
             "chat-stream-event-v1",
             lambda payload: payload.update({"delta": None}),
-            "block_delta 必须包含 block_id 和 delta",
+            "block_delta 事件必须包含：delta",
+        ),
+        (
+            "job-event-v1",
+            lambda payload: payload.update({"event_type": "started"}),
+            "started 事件不能包含：progress_current, progress_total",
+        ),
+        (
+            "chat-stream-event-v1",
+            lambda payload: payload.update({"error_code": "INTERNAL_ERROR"}),
+            "block_delta 事件不能包含：error_code",
         ),
     ],
 )
@@ -178,6 +187,19 @@ def test_v3_typescript_dto_fields_match_pydantic_contracts() -> None:
         assert actual_required == expected_required
 
 
+def test_v3_typescript_event_types_are_discriminated_unions() -> None:
+    """客户端类型必须与事件的互斥字段规则保持一致。"""
+
+    source = TYPESCRIPT_DTO_PATH.read_text(encoding="utf-8")
+
+    assert "export type JobEventV1 =" in source
+    assert "event_type: \"progress\";" in source
+    assert "progress_current?: never;" in source
+    assert "export type ChatStreamEventV1 =" in source
+    assert "event_type: \"block_delta\";" in source
+    assert "error_code?: never;" in source
+
+
 def test_revision_checksum_is_stable_and_covers_all_frozen_inputs() -> None:
     """同一 Spec 的 checksum 稳定，资料变化必须产生新 Revision 身份。"""
 
@@ -191,3 +213,29 @@ def test_revision_checksum_is_stable_and_covers_all_frozen_inputs() -> None:
         AgentRevisionSpecV1.model_validate(payload)
     )
     assert revision_spec_checksum(original) != revision_spec_checksum(changed)
+
+
+def test_bundle_checksum_is_stable_and_excludes_only_its_own_field() -> None:
+    """Bundle checksum 必须覆盖全部固定成员与 manifest 的其他字段。"""
+
+    manifest = AgentRevisionBundleManifestV1.model_validate(
+        _read_json(FIXTURE_DIRECTORY / "agent-revision-bundle-v1.valid.json")
+    )
+    members = {
+        "revision.json": b'{"schema_version":"muye.ai/agent-revision/v1"}\n',
+        "resource-snapshot.json": b'{"resources":[]}\n',
+        "evaluation-summary.json": b'{"passed":true}\n',
+    }
+
+    assert revision_bundle_checksum(manifest, members) == manifest.bundle_checksum
+    assert revision_bundle_checksum(
+        manifest.model_copy(update={"bundle_checksum": "f" * 64}), members
+    ) == manifest.bundle_checksum
+    assert revision_bundle_checksum(
+        manifest.model_copy(update={"build_id": "build_hotel_revision_3"}), members
+    ) != manifest.bundle_checksum
+    assert revision_bundle_checksum(manifest, {**members, "revision.json": b"{}\n"}) != (
+        manifest.bundle_checksum
+    )
+    with pytest.raises(ValueError, match="必须且只能包含"):
+        revision_bundle_checksum(manifest, {"revision.json": b"{}\n"})

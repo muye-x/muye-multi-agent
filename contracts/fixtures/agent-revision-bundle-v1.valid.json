@@ -3,7 +3,7 @@
   "agent_id": "agent_hotel_employee",
   "revision_id": "revision_0123456789abcdef",
   "revision_checksum": "3333333333333333333333333333333333333333333333333333333333333333",
-  "bundle_checksum": "4444444444444444444444444444444444444444444444444444444444444444",
+  "bundle_checksum": "4936dbee4f6894d0f7d6eae21e097bac6685d56ade2fc7e88764787383a70d81",
   "build_id": "build_hotel_revision_2",
   "runtime_contract_version": "muye-runtime/1",
   "resources": [

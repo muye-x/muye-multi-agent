@@ -1,6 +1,157 @@
 {
   "$id": "https://muye.ai/schemas/job-event-v1.schema.json",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "started"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "artifact_ref": false,
+          "error_code": false,
+          "progress_current": false,
+          "progress_total": false
+        },
+        "required": []
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "progress"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "artifact_ref": false,
+          "error_code": false,
+          "progress_current": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "progress_total": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "progress_current",
+          "progress_total"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "artifact"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "artifact_ref": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "error_code": false,
+          "progress_current": false,
+          "progress_total": false
+        },
+        "required": [
+          "artifact_ref"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "completed"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "artifact_ref": false,
+          "error_code": false,
+          "progress_current": false,
+          "progress_total": false
+        },
+        "required": []
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "failed"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "artifact_ref": false,
+          "error_code": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "progress_current": false,
+          "progress_total": false
+        },
+        "required": [
+          "error_code"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "cancelled"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "artifact_ref": false,
+          "error_code": false,
+          "progress_current": false,
+          "progress_total": false
+        },
+        "required": []
+      }
+    }
+  ],
   "description": "可恢复 Job SSE 的一条严格事件。\n\n``sequence`` 在同一 Job 内单调递增；消费者可以以它作为 Last-Event-ID 恢复点。\n字段按事件类型受限，避免将任意日志、路径或异常对象写入事件流。",
   "properties": {
     "artifact_ref": {

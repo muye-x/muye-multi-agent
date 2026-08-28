@@ -8,9 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -24,6 +29,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            **/requirements.txt
       - run: python -m pip install --upgrade pip pip-audit cyclonedx-bom
       - run: python -m pip install -r requirements.txt
       - run: pip-audit
@@ -35,7 +44,9 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
@@ -43,24 +54,56 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            **/requirements.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.txt
       - run: PYTHONPATH=muye-llm:muye-gateway python -m pytest -q muye-llm/tests muye-gateway/dashboard_api/tests
       - run: PYTHONPATH=muye-data python -m pytest -q muye-data/tests
       - run: PYTHONPATH=agents/agent-main python -m pytest -q agents/agent-main/tests
-      - run: python -m contracts.export_schemas
-      - run: git diff --exit-code -- contracts/schemas
-      - run: PYTHONPATH=. python -m pytest -q tests/contract tests/phase1
+      - name: Verify versioned JSON Schema
+        run: python -m contracts.export_schemas --check
+      - name: Test v2 contracts and phase 1 compatibility
+        run: PYTHONPATH=. python -m pytest -q tests/contract tests/phase1
+      - name: Test v3 phase zero gates
+        run: |
+          PYTHONPATH=. python -m pytest -q tests/v3
+          PYTHONPATH=. python -m muye_core.migrations.runner plan
+          PYTHONPATH=. python -m tools.v3_baseline \
+            --input tests/v3/fixtures/v2-quality-baseline-input.json \
+            --output /tmp/v2-quality-baseline-report.json
+          diff --unified \
+            tests/v3/fixtures/v2-quality-baseline-report.json \
+            /tmp/v2-quality-baseline-report.json
       - run: PYTHONPATH=. python -m pytest -q tests/generator
       - run: python -m tools.cli agent sync --check
       - run: python -m pytest -q tests
       - run: test -z "$(git status --porcelain)"
       - run: python -m pip check
-      - run: python -m compileall -q contracts control_server poc/phase1 tools tests/contract tests/phase1 tests/generator tests/template tests/catalog tests/control tests/fixtures muye-llm/src muye-data agents/agent-main muye-gateway/dashboard_api
+      - run: python -m compileall -q contracts control_server muye_core poc/phase1 tools tests/contract tests/phase1 tests/generator tests/template tests/catalog tests/control tests/fixtures tests/v3 muye-llm/src muye-data agents/agent-main muye-gateway/dashboard_api
       - run: python main.py --dry-run
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run build
 
   workspace-hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - run: test "$(find . -type d -name .git | wc -l)" -eq 1
@@ -68,19 +111,3 @@ jobs:
       - run: test -z "$(find . -type d \( -name .codex -o -name .agents -o -name .claude -o -name .cursor -o -name .continue -o -name .pytest_cache -o -name __pycache__ \) -print -quit)"
       - run: test -z "$(find . -type f \( \( -name '.env*' ! -name '.env.example' \) -o -name 'env.example' -o -name '*.db*' -o -name '*.sqlite*' -o -name '*.log*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name '*.crt' \) -print -quit)"
       - run: test -z "$(find . -type f \( -name 'test_fix.py' -o -name 'test_fix_*.py' -o -name 'test_debug.py' -o -name 'test_debug_*.py' -o -name 'test_temp.py' -o -name 'test_temp_*.py' -o -name 'test_tmp.py' -o -name 'test_tmp_*.py' \) -print -quit)"
-
-  v3-phase-zero:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r requirements.txt
-      - run: python -m contracts.export_schemas
-      - run: git diff --exit-code -- contracts/schemas
-      - run: PYTHONPATH=. python -m pytest -q tests/v3
-      - run: PYTHONPATH=. python -m muye_core.migrations.runner plan
-      - run: PYTHONPATH=. python -m tools.v3_baseline --input tests/v3/fixtures/v2-quality-baseline-input.json --output /tmp/v2-quality-baseline-report.json
-      - run: cmp tests/v3/fixtures/v2-quality-baseline-report.json /tmp/v2-quality-baseline-report.json

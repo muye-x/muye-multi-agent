@@ -7,7 +7,5 @@
   "stage": "embed_chunks",
   "message": "正在写入向量。",
   "progress_current": 4,
-  "progress_total": 10,
-  "artifact_ref": null,
-  "error_code": null
+  "progress_total": 10
 }
