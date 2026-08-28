@@ -66,10 +66,12 @@ class _FakeConnection:
         self.closed = True
 
 
-def test_empty_stage_zero_migration_directory_has_stable_empty_plan() -> None:
-    """阶段 0 不创建业务表，但 CI 仍能执行无副作用的迁移检查。"""
+def test_phase_one_migration_plan_contains_the_core_schema() -> None:
+    """阶段 1 的首份迁移必须可被确定性发现。"""
 
-    assert render_plan(discover_migrations()) == "[]\n"
+    migrations = discover_migrations()
+
+    assert [(migration.version, migration.name) for migration in migrations] == [(1, "phase1_core")]
 
 
 def test_migrations_are_ordered_and_checksums_are_stable(tmp_path: Path) -> None:
