@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+import json
 import logging
 from pathlib import Path
 from secrets import token_hex
@@ -23,7 +24,12 @@ from .models import (
     DraftResponse,
     GrantReplaceRequest,
     LoginRequest,
+    JobCreateRequest,
+    JobResponse,
     MeResponse,
+    RevisionApprovalRequest,
+    RevisionFreezeRequest,
+    RevisionResponse,
     SourceUploadResponse,
     UserCreateRequest,
 )
@@ -200,6 +206,61 @@ def create_app(*, store: CoreStore, artifact_root: Path) -> FastAPI:
         result = service.idempotent(f"asset-upload:{admin.user_id}:{agent_id}", key, body, lambda: _attach_asset(service, admin, agent_id, body, _request_id(http_request), stored.reused))
         return SourceUploadResponse.model_validate(result.body)
 
+    @app.post("/api/v3/agents/{agent_id}/revisions", response_model=None, status_code=201)
+    async def freeze_revision(http_request: Request, agent_id: str, request: RevisionFreezeRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        body = request.model_dump(mode="json")
+        result = service.idempotent(
+            f"revision-freeze:{agent_id}", key, body,
+            lambda: _freeze_revision(service, admin, agent_id, request.draft_version, _request_id(http_request)),
+        )
+        return JSONResponse(result.body, status_code=result.status_code)
+
+    @app.get("/api/v3/revisions/{revision_id}", response_model=RevisionResponse)
+    async def revision_detail(revision_id: str, _admin: Principal = Depends(require_admin)) -> RevisionResponse:
+        return RevisionResponse.model_validate(_revision(service.revision_detail(revision_id)))
+
+    @app.post("/api/v3/revisions/{revision_id}/approve", response_model=None)
+    async def approve_revision(http_request: Request, revision_id: str, request: RevisionApprovalRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        body = request.model_dump(mode="json")
+        result = service.idempotent(
+            f"revision-approve:{revision_id}", key, body,
+            lambda: _approve_revision(service, admin, revision_id, request.checksum, _request_id(http_request)),
+        )
+        return JSONResponse(result.body, status_code=result.status_code)
+
+    @app.post("/api/v3/revisions/{revision_id}/jobs", response_model=None, status_code=201)
+    async def create_job(http_request: Request, revision_id: str, request: JobCreateRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
+        body = request.model_dump(mode="json")
+        result = service.idempotent(
+            f"job-create:{revision_id}", key, body,
+            lambda: _create_job(service, admin, revision_id, request.job_type, key, _request_id(http_request)),
+        )
+        return JSONResponse(result.body, status_code=result.status_code)
+
+    @app.get("/api/v3/jobs/{job_id}", response_model=JobResponse)
+    async def job_detail(job_id: str, _admin: Principal = Depends(require_admin)) -> JobResponse:
+        return JobResponse.model_validate(_job(service.job_detail(job_id)))
+
+    @app.post("/api/v3/jobs/{job_id}/cancel", response_model=JobResponse)
+    async def cancel_job(http_request: Request, job_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JobResponse:
+        result = service.idempotent(
+            f"job-cancel:{job_id}", key, {},
+            lambda: _cancel_job(service, admin, job_id, _request_id(http_request)),
+        )
+        return JobResponse.model_validate(result.body)
+
+    @app.get("/api/v3/jobs/{job_id}/events")
+    async def job_events(job_id: str, last_event_id: int = Header(default=-1, alias="Last-Event-ID"), _admin: Principal = Depends(require_admin)) -> Response:
+        if last_event_id < -1:
+            raise DomainError("VALIDATION_ERROR", "Last-Event-ID 无效", status_code=422)
+        events = service.job_events(job_id, after_sequence=last_event_id)
+
+        payload = "".join(
+            f"id: {event.sequence}\nevent: {event.event_type}\ndata: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+            for event in events
+        )
+        return Response(content=payload, media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
     return app
 
 
@@ -277,3 +338,53 @@ def _attach_asset(service: CoreStore, admin: Principal, agent_id: str, body: dic
     asset_id, already_registered = service.attach_asset(admin, agent_id, **body)
     service.audit(actor_id=admin.user_id, action="upload_source", target_type="asset", target_id=asset_id, request_id=request_id, details={"agent_id": agent_id, "sha256": body["sha256"], "reused": reused or already_registered})
     return 201, {"asset_id": asset_id, "sha256": body["sha256"], "size_bytes": body["size_bytes"], "media_type": body["media_type"], "display_name": body["display_name"], "reused": reused or already_registered}
+
+
+def _revision(record: object) -> dict[str, object]:
+    """将不可变领域 Revision 映射为公开 API 响应。"""
+
+    return {
+        "revision_id": record.revision_id,
+        "agent_id": record.agent_id,
+        "revision_number": record.revision_number,
+        "checksum": record.checksum,
+        "status": record.status,
+        "spec": record.spec.model_dump(mode="json"),
+    }
+
+
+def _freeze_revision(service: CoreStore, admin: Principal, agent_id: str, draft_version: int, request_id: str) -> tuple[int, dict[str, object]]:
+    record = service.freeze_revision(admin, agent_id, draft_version)
+    service.audit(actor_id=admin.user_id, action="freeze_revision", target_type="revision", target_id=record.revision_id, request_id=request_id, details={"agent_id": agent_id, "checksum": record.checksum})
+    return 201, _revision(record)
+
+
+def _approve_revision(service: CoreStore, admin: Principal, revision_id: str, checksum: str, request_id: str) -> tuple[int, dict[str, object]]:
+    record = service.approve_revision(admin, revision_id, checksum)
+    service.audit(actor_id=admin.user_id, action="approve_revision", target_type="revision", target_id=record.revision_id, request_id=request_id, details={"checksum": record.checksum})
+    return 200, _revision(record)
+
+
+def _job(record: object) -> dict[str, object]:
+    """映射 Job 公开状态，刻意不暴露 Worker lease owner。"""
+
+    return {
+        "job_id": record.job_id,
+        "job_type": record.job_type,
+        "revision_id": record.revision_id,
+        "status": record.status,
+        "attempt": record.attempt,
+        "error_code": record.error_code,
+    }
+
+
+def _create_job(service: CoreStore, admin: Principal, revision_id: str, job_type: str, idempotency_key: str, request_id: str) -> tuple[int, dict[str, object]]:
+    record = service.create_job(admin, revision_id=revision_id, job_type=job_type, idempotency_key=idempotency_key)
+    service.audit(actor_id=admin.user_id, action="create_job", target_type="job", target_id=record.job_id, request_id=request_id, details={"revision_id": revision_id, "job_type": job_type})
+    return 201, _job(record)
+
+
+def _cancel_job(service: CoreStore, admin: Principal, job_id: str, request_id: str) -> tuple[int, dict[str, object]]:
+    record = service.request_job_cancel(admin, job_id)
+    service.audit(actor_id=admin.user_id, action="cancel_job", target_type="job", target_id=job_id, request_id=request_id)
+    return 200, _job(record)

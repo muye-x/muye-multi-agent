@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from secrets import token_urlsafe
+from secrets import token_hex, token_urlsafe
 from threading import RLock
 from typing import Any, Callable
+
+from contracts.v3 import AgentRevisionSpecV1
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
@@ -74,6 +76,23 @@ class DraftRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RevisionRecord:
+    """一个已冻结的 Agent 配置及其审批状态。
+
+    ``spec`` 和 ``checksum`` 创建后不可改变；状态只能依次进入审阅、批准及后续的
+    构建状态。阶段 2 的构建 Worker 只能接受 ``APPROVED`` Revision。
+    """
+
+    revision_id: str
+    agent_id: str
+    revision_number: int
+    checksum: str
+    spec: AgentRevisionSpecV1
+    status: str
+    approved_by: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class IdempotentResponse:
     request_checksum: str
     status_code: int
@@ -117,6 +136,10 @@ class InMemoryCoreStore(CoreStore):
         self._idempotency: dict[tuple[str, str], IdempotentResponse] = {}
         self._assets: dict[str, dict[str, object]] = {}
         self._draft_sources: dict[str, list[dict[str, object]]] = {}
+        self._revisions: dict[str, RevisionRecord] = {}
+        self._jobs: dict[str, object] = {}
+        self._jobs_by_key: dict[tuple[str, str, str], str] = {}
+        self._job_events: dict[str, list[object]] = {}
         self._audit_events: list[AuditEvent] = []
         self._lock = RLock()
 
@@ -275,6 +298,162 @@ class InMemoryCoreStore(CoreStore):
                 sources.append({"asset_id": asset_id, "display_name": display_name, "sort_order": len(sources)})
                 draft.version += 1
             return asset_id, reused
+
+    def freeze_revision(self, actor: Principal, agent_id: str, draft_version: int) -> RevisionRecord:
+        """在 Draft 乐观锁与资料快照同时成立时创建待审 Revision。"""
+
+        self._admin(actor)
+        from .revisions import freeze_revision_spec
+
+        with self._lock:
+            agent, draft = self.agent_detail(agent_id)
+            if agent.archived_at or agent.suspended_at or draft is None:
+                raise DomainError("CONFLICT", "Agent 当前不能冻结 Revision")
+            if draft.version != draft_version:
+                raise DomainError("VERSION_CONFLICT", "Draft 已被其他请求更新")
+            sources = self._draft_sources.get(agent_id, [])
+            if not sources:
+                raise DomainError("VALIDATION_ERROR", "Revision 至少需要一份资料", status_code=422)
+            frozen_sources = []
+            for source in sources:
+                asset = self._assets[source["asset_id"]]
+                frozen_sources.append(
+                    {
+                        "asset_id": source["asset_id"],
+                        "sha256": asset["sha256"],
+                        "display_name": source["display_name"],
+                    }
+                )
+            revision_number = 1 + max(
+                (record.revision_number for record in self._revisions.values() if record.agent_id == agent_id),
+                default=0,
+            )
+            spec, checksum = freeze_revision_spec(
+                agent_id=agent_id,
+                revision_id=f"revision_{token_hex(16)}",
+                revision_number=revision_number,
+                draft_config=draft.config,
+                sources=frozen_sources,
+            )
+            record = RevisionRecord(
+                revision_id=spec.revision_id,
+                agent_id=agent_id,
+                revision_number=revision_number,
+                checksum=checksum,
+                spec=spec,
+                status="REVIEW_REQUIRED",
+            )
+            self._revisions[record.revision_id] = record
+            return record
+
+    def approve_revision(self, actor: Principal, revision_id: str, checksum: str) -> RevisionRecord:
+        """批准指定 checksum 的 Revision，防止审阅结果被资料或配置漂移复用。"""
+
+        self._admin(actor)
+        with self._lock:
+            record = self.revision_detail(revision_id)
+            if record.status != "REVIEW_REQUIRED":
+                raise DomainError("CONFLICT", "Revision 当前不可审批")
+            if record.checksum != checksum:
+                raise DomainError("CONFLICT", "Revision checksum 与待审批版本不一致")
+            approved = replace(record, status="APPROVED", approved_by=actor.user_id)
+            self._revisions[revision_id] = approved
+            return approved
+
+    def revision_detail(self, revision_id: str) -> RevisionRecord:
+        """读取已冻结 Revision；调用方不能通过此接口修改其内容。"""
+
+        record = self._revisions.get(revision_id)
+        if record is None:
+            raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
+        return record
+
+    def create_job(self, actor: Principal, *, revision_id: str, job_type: str, idempotency_key: str):
+        """创建或返回同一幂等键的构建/评测 Job。"""
+
+        self._admin(actor)
+        from .jobs import JobRecord
+
+        if job_type not in {"BUILD", "EVALUATE"}:
+            raise DomainError("VALIDATION_ERROR", "Job 类型无效", status_code=422)
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise DomainError("VALIDATION_ERROR", "Job 幂等键无效", status_code=422)
+        with self._lock:
+            revision = self.revision_detail(revision_id)
+            if job_type == "BUILD" and revision.status != "APPROVED":
+                raise DomainError("CONFLICT", "只有已审批 Revision 可以构建")
+            key = (job_type, revision_id, idempotency_key)
+            previous_id = self._jobs_by_key.get(key)
+            if previous_id:
+                return self._jobs[previous_id]
+            job = JobRecord(f"job_{token_hex(16)}", job_type, revision_id, idempotency_key, "PENDING", 1)
+            self._jobs[job.job_id] = job
+            self._jobs_by_key[key] = job.job_id
+            self._job_events[job.job_id] = []
+            return job
+
+    def job_detail(self, job_id: str):
+        """读取 Job 当前状态，未知 ID 使用统一的 not-found 错误。"""
+
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
+            return job
+
+    def claim_job(self, *, worker_id: str, lease_seconds: int = 60):
+        """领取最早可执行 Job，并为 Worker 建立有限 lease。"""
+
+        from .jobs import claim
+
+        with self._lock:
+            for job_id in sorted(self._jobs):
+                try:
+                    claimed = claim(self._jobs[job_id], worker_id=worker_id, now=_now(), lease_seconds=lease_seconds)
+                except DomainError:
+                    continue
+                self._jobs[job_id] = claimed
+                self._append_job_event_locked(job_id, event_type="started", stage="claimed")
+                return claimed
+            return None
+
+    def request_job_cancel(self, actor: Principal, job_id: str):
+        """请求协作式取消，实际清理由当前 Worker 在安全检查点完成。"""
+
+        self._admin(actor)
+        from .jobs import request_cancel
+
+        with self._lock:
+            updated = request_cancel(self.job_detail(job_id))
+            self._jobs[job_id] = updated
+            return updated
+
+    def complete_job(self, *, worker_id: str, job_id: str, status: str, error_code: str | None = None):
+        """收敛 Worker Job，并追加唯一的终态事件。"""
+
+        from .jobs import complete
+
+        with self._lock:
+            updated = complete(self.job_detail(job_id), worker_id=worker_id, status=status, error_code=error_code)
+            self._jobs[job_id] = updated
+            terminal_event = {"SUCCEEDED": "completed", "FAILED": "failed", "CANCELLED": "cancelled"}[status]
+            self._append_job_event_locked(job_id, event_type=terminal_event, stage="finished", error_code=error_code)
+            return updated
+
+    def job_events(self, job_id: str, after_sequence: int = -1) -> list[object]:
+        """返回可由 Last-Event-ID 恢复的追加事件，不返回内部日志。"""
+
+        with self._lock:
+            self.job_detail(job_id)
+            return [event for event in self._job_events[job_id] if event.sequence > after_sequence]
+
+    def _append_job_event_locked(self, job_id: str, *, event_type: str, stage: str, error_code: str | None = None) -> None:
+        """在调用方持锁时按连续序号追加经契约校验的事件。"""
+
+        from .jobs import new_event
+
+        events = self._job_events[job_id]
+        events.append(new_event(job_id=job_id, sequence=len(events), event_type=event_type, stage=stage, error_code=error_code))
 
     def audit(self, *, actor_id: str | None, action: str, target_type: str, target_id: str, request_id: str, details: dict[str, object] | None = None) -> None:
         """记录已经脱敏的领域写操作；调用方不得传入密码、Token 或资料正文。"""

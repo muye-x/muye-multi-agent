@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
-from secrets import token_urlsafe
+from secrets import token_hex, token_urlsafe
 from typing import Any, Callable
+
+from contracts.v3 import AgentRevisionSpecV1
 
 from .service import (
     AgentRecord,
@@ -14,6 +16,7 @@ from .service import (
     DraftRecord,
     IdempotentResponse,
     Principal,
+    RevisionRecord,
     TokenPair,
     _PASSWORD_HASHER,
     _hash,
@@ -149,6 +152,269 @@ class PostgresCoreStore(CoreStore):
             if cursor.rowcount == 0:
                 raise DomainError("NOT_FOUND", "开放 Draft 不存在", status_code=404)
 
+    def freeze_revision(self, actor: Principal, agent_id: str, draft_version: int) -> RevisionRecord:
+        """在一个数据库事务内锁定 Draft、冻结 Asset 并创建待审 Revision。"""
+
+        self._admin(actor)
+        from .revisions import freeze_revision_spec
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT archived_at, suspended_at FROM agents WHERE agent_id = %s",
+                (agent_id,),
+            )
+            agent_state = cursor.fetchone()
+            if agent_state is None:
+                raise DomainError("NOT_FOUND", "Agent 不存在", status_code=404)
+            if agent_state[0] is not None or agent_state[1] is not None:
+                raise DomainError("CONFLICT", "Agent 当前不能冻结 Revision")
+            cursor.execute(
+                "SELECT version, config_json FROM agent_drafts WHERE agent_id = %s FOR UPDATE",
+                (agent_id,),
+            )
+            draft = cursor.fetchone()
+            if draft is None:
+                raise DomainError("NOT_FOUND", "开放 Draft 不存在", status_code=404)
+            if draft[0] != draft_version:
+                raise DomainError("VERSION_CONFLICT", "Draft 已被其他请求更新")
+            cursor.execute(
+                """
+                SELECT source.asset_id, asset.sha256, source.display_name
+                FROM draft_sources source
+                JOIN source_assets asset ON asset.asset_id = source.asset_id
+                WHERE source.agent_id = %s AND asset.parse_status IN ('SAFE', 'PARSED')
+                ORDER BY source.sort_order
+                """,
+                (agent_id,),
+            )
+            sources = [
+                {"asset_id": row[0], "sha256": row[1], "display_name": row[2]}
+                for row in cursor.fetchall()
+            ]
+            if not sources:
+                raise DomainError("VALIDATION_ERROR", "Revision 至少需要一份已安全检查的资料", status_code=422)
+            cursor.execute(
+                "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM agent_revisions WHERE agent_id = %s",
+                (agent_id,),
+            )
+            revision_number = int(cursor.fetchone()[0])
+            from secrets import token_hex
+            spec, checksum = freeze_revision_spec(
+                agent_id=agent_id,
+                revision_id=f"revision_{token_hex(16)}",
+                revision_number=revision_number,
+                draft_config=draft[1],
+                sources=sources,
+            )
+            cursor.execute(
+                """
+                INSERT INTO agent_revisions
+                    (revision_id, agent_id, revision_number, checksum, spec_json, status, created_by)
+                VALUES (%s, %s, %s, %s, %s::jsonb, 'REVIEW_REQUIRED', %s)
+                """,
+                (spec.revision_id, agent_id, revision_number, checksum, json.dumps(spec.model_dump(mode="json")), actor.user_id),
+            )
+            for source in sources:
+                cursor.execute(
+                    "INSERT INTO revision_sources (revision_id, asset_id, asset_sha256) VALUES (%s, %s, %s)",
+                    (spec.revision_id, source["asset_id"], source["sha256"]),
+                )
+            return RevisionRecord(spec.revision_id, agent_id, revision_number, checksum, spec, "REVIEW_REQUIRED")
+
+    def approve_revision(self, actor: Principal, revision_id: str, checksum: str) -> RevisionRecord:
+        """以审批时复核的 checksum 原子批准待审 Revision。"""
+
+        self._admin(actor)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE agent_revisions
+                SET status = 'APPROVED'
+                WHERE revision_id = %s AND checksum = %s AND status = 'REVIEW_REQUIRED'
+                RETURNING agent_id, revision_number, spec_json
+                """,
+                (revision_id, checksum),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                existing = self._revision_row(cursor, revision_id)
+                if existing is None:
+                    raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
+                if existing[3] != checksum:
+                    raise DomainError("CONFLICT", "Revision checksum 与待审批版本不一致")
+                raise DomainError("CONFLICT", "Revision 当前不可审批")
+            cursor.execute(
+                "INSERT INTO revision_approvals (revision_id, revision_checksum, approved_by, approved_at) VALUES (%s, %s, %s, now())",
+                (revision_id, checksum, actor.user_id),
+            )
+            spec = AgentRevisionSpecV1.model_validate(row[2])
+            return RevisionRecord(revision_id, row[0], row[1], checksum, spec, "APPROVED", actor.user_id)
+
+    def revision_detail(self, revision_id: str) -> RevisionRecord:
+        """读取不可变 Revision 与当前状态，不公开可变 Draft。"""
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            row = self._revision_row(cursor, revision_id)
+            if row is None:
+                raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
+            cursor.execute("SELECT approved_by FROM revision_approvals WHERE revision_id = %s", (revision_id,))
+            approval = cursor.fetchone()
+            return RevisionRecord(
+                revision_id,
+                row[0],
+                row[1],
+                row[3],
+                AgentRevisionSpecV1.model_validate(row[2]),
+                row[4],
+                approval[0] if approval else None,
+            )
+
+    def create_job(self, actor: Principal, *, revision_id: str, job_type: str, idempotency_key: str):
+        """事务性创建 Revision Job；相同业务输入只返回原 Job。"""
+
+        self._admin(actor)
+        from .jobs import JobRecord
+
+        if job_type not in {"BUILD", "EVALUATE"}:
+            raise DomainError("VALIDATION_ERROR", "Job 类型无效", status_code=422)
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise DomainError("VALIDATION_ERROR", "Job 幂等键无效", status_code=422)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT status FROM agent_revisions WHERE revision_id = %s", (revision_id,))
+            revision = cursor.fetchone()
+            if revision is None:
+                raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
+            if job_type == "BUILD" and revision[0] != "APPROVED":
+                raise DomainError("CONFLICT", "只有已审批 Revision 可以构建")
+            job_id = f"job_{token_hex(16)}"
+            cursor.execute(
+                """
+                INSERT INTO jobs (job_id, job_type, subject_id, revision_id, idempotency_key, status)
+                VALUES (%s, %s, %s, %s, %s, 'PENDING')
+                ON CONFLICT (job_type, subject_id, idempotency_key) DO NOTHING
+                RETURNING job_id, job_type, revision_id, idempotency_key, status, attempt, lease_owner, lease_until, error_code
+                """,
+                (job_id, job_type, revision_id, revision_id, idempotency_key),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """
+                    SELECT job_id, job_type, revision_id, idempotency_key, status, attempt, lease_owner, lease_until, error_code
+                    FROM jobs WHERE job_type = %s AND subject_id = %s AND idempotency_key = %s
+                    """,
+                    (job_type, revision_id, idempotency_key),
+                )
+                row = cursor.fetchone()
+            return JobRecord(*row)
+
+    def job_detail(self, job_id: str):
+        """读取 Job，不泄露 Worker 私有的实现上下文。"""
+
+        from .jobs import JobRecord
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT job_id, job_type, revision_id, idempotency_key, status, attempt, lease_owner, lease_until, error_code FROM jobs WHERE job_id = %s",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
+            return JobRecord(*row)
+
+    def claim_job(self, *, worker_id: str, lease_seconds: int = 60):
+        """以 SKIP LOCKED 领取唯一 Job，避免多个 Worker 重复执行。"""
+
+        from .jobs import JobRecord
+
+        if not worker_id or lease_seconds < 1:
+            raise ValueError("Worker 或 lease 参数无效")
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH candidate AS (
+                    SELECT job_id FROM jobs
+                    WHERE status = 'PENDING'
+                       OR (status IN ('RUNNING', 'CANCEL_REQUESTED') AND lease_until <= now())
+                    ORDER BY created_at, job_id
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE jobs
+                SET status = CASE WHEN jobs.status = 'CANCEL_REQUESTED' THEN 'CANCEL_REQUESTED' ELSE 'RUNNING' END,
+                    lease_owner = %s,
+                    lease_until = now() + (%s * interval '1 second')
+                FROM candidate
+                WHERE jobs.job_id = candidate.job_id
+                RETURNING jobs.job_id, jobs.job_type, jobs.revision_id, jobs.idempotency_key, jobs.status,
+                          jobs.attempt, jobs.lease_owner, jobs.lease_until, jobs.error_code
+                """,
+                (worker_id, lease_seconds),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            job = JobRecord(*row)
+            self._append_job_event(cursor, job.job_id, event_type="started", stage="claimed")
+            return job
+
+    def request_job_cancel(self, actor: Principal, job_id: str):
+        """请求取消而不破坏 Worker 已开始的临界步骤。"""
+
+        self._admin(actor)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE jobs SET status = 'CANCEL_REQUESTED', cancel_requested_at = now()
+                WHERE job_id = %s AND status NOT IN ('CANCELLED', 'SUCCEEDED', 'FAILED')
+                RETURNING job_id, job_type, revision_id, idempotency_key, status, attempt, lease_owner, lease_until, error_code
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                self.job_detail(job_id)
+                raise DomainError("CONFLICT", "Job 已处于终态，不能取消")
+            from .jobs import JobRecord
+            return JobRecord(*row)
+
+    def complete_job(self, *, worker_id: str, job_id: str, status: str, error_code: str | None = None):
+        """持有 lease 的 Worker 追加终态，过期或取消后拒绝竞争写入。"""
+
+        if status not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+            raise ValueError("Job 终态无效")
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE jobs SET status = %s, error_code = %s, completed_at = now(), lease_owner = NULL, lease_until = NULL
+                WHERE job_id = %s AND lease_owner = %s
+                  AND status NOT IN ('CANCELLED', 'SUCCEEDED', 'FAILED')
+                  AND (status <> 'CANCEL_REQUESTED' OR %s = 'CANCELLED')
+                RETURNING job_id, job_type, revision_id, idempotency_key, status, attempt, lease_owner, lease_until, error_code
+                """,
+                (status, error_code, job_id, worker_id, status),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise DomainError("CONFLICT", "Worker 不持有 Job lease 或 Job 当前不可完成")
+            terminal_event = {"SUCCEEDED": "completed", "FAILED": "failed", "CANCELLED": "cancelled"}[status]
+            self._append_job_event(cursor, job_id, event_type=terminal_event, stage="finished", error_code=error_code)
+            from .jobs import JobRecord
+            return JobRecord(*row)
+
+    def job_events(self, job_id: str, after_sequence: int = -1) -> list[object]:
+        """读取追加 Job 事件，供 SSE 按 Last-Event-ID 恢复。"""
+
+        from contracts.v3 import JobEventV1
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM jobs WHERE job_id = %s", (job_id,))
+            if cursor.fetchone() is None:
+                raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
+            cursor.execute("SELECT payload_json FROM job_events WHERE job_id = %s AND sequence > %s ORDER BY sequence", (job_id, after_sequence))
+            return [JobEventV1.model_validate(row[0]) for row in cursor.fetchall()]
+
     def suspend(self, actor: Principal, agent_id: str) -> AgentRecord:
         return self._set_agent_time(actor, agent_id, "suspended_at", "停用")
 
@@ -230,6 +496,43 @@ class PostgresCoreStore(CoreStore):
         cursor.execute("SELECT active FROM core_users WHERE user_id=%s", (user_id,))
         row = cursor.fetchone()
         return bool(row and row[0])
+
+    @staticmethod
+    def _revision_row(cursor: Any, revision_id: str) -> tuple[object, ...] | None:
+        """读取 Revision 基础字段，供审批冲突与详情查询复用。"""
+
+        cursor.execute(
+            "SELECT agent_id, revision_number, spec_json, checksum, status FROM agent_revisions WHERE revision_id = %s",
+            (revision_id,),
+        )
+        return cursor.fetchone()
+
+    @staticmethod
+    def _append_job_event(
+        cursor: Any,
+        job_id: str,
+        *,
+        event_type: str,
+        stage: str,
+        error_code: str | None = None,
+    ) -> None:
+        """在持有 Job 行锁的事务内生成连续且已校验的 JobEvent。"""
+
+        from .jobs import new_event
+
+        cursor.execute("SELECT COALESCE(MAX(sequence) + 1, 0) FROM job_events WHERE job_id = %s", (job_id,))
+        sequence = int(cursor.fetchone()[0])
+        event = new_event(
+            job_id=job_id,
+            sequence=sequence,
+            event_type=event_type,
+            stage=stage,
+            error_code=error_code,
+        )
+        cursor.execute(
+            "INSERT INTO job_events (job_id, sequence, event_type, payload_json) VALUES (%s, %s, %s, %s::jsonb)",
+            (job_id, sequence, event.event_type, json.dumps(event.model_dump(mode="json"))),
+        )
 
     def _connection(self) -> Any:
         import psycopg

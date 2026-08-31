@@ -87,3 +87,42 @@ class SourceUploadResponse(ApiModel):
     display_name: str
     reused: bool
 
+
+class RevisionFreezeRequest(ApiModel):
+    """基于指定 Draft 版本冻结 Revision 的请求。"""
+
+    draft_version: int = Field(ge=1)
+
+
+class RevisionApprovalRequest(ApiModel):
+    """审批人确认其审阅的不可变 Revision checksum。"""
+
+    checksum: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class RevisionResponse(ApiModel):
+    """Revision 的公开身份、不可变 checksum 与当前状态。"""
+
+    revision_id: str
+    agent_id: str
+    revision_number: int
+    checksum: str
+    status: str
+    spec: dict[str, object]
+
+
+class JobCreateRequest(ApiModel):
+    """请求对已冻结 Revision 执行构建或评测。"""
+
+    job_type: str = Field(pattern=r"^(BUILD|EVALUATE)$")
+
+
+class JobResponse(ApiModel):
+    """可恢复 Job 的公开状态；lease owner 不向 API 客户端公开。"""
+
+    job_id: str
+    job_type: str
+    revision_id: str
+    status: str
+    attempt: int
+    error_code: str | None = None
