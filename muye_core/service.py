@@ -140,6 +140,7 @@ class InMemoryCoreStore(CoreStore):
         self._jobs: dict[str, object] = {}
         self._jobs_by_key: dict[tuple[str, str, str], str] = {}
         self._job_events: dict[str, list[object]] = {}
+        self._ready_revisions: dict[str, dict[str, str]] = {}
         self._audit_events: list[AuditEvent] = []
         self._lock = RLock()
 
@@ -446,6 +447,18 @@ class InMemoryCoreStore(CoreStore):
         with self._lock:
             self.job_detail(job_id)
             return [event for event in self._job_events[job_id] if event.sequence > after_sequence]
+
+    def mark_revision_ready(self, revision_id: str, *, build_id: str, bundle_checksum: str, report_ref: str, storage_key: str, collection_name: str, collection_checksum: str) -> RevisionRecord:
+        """仅由评测通过的 Worker 将已审批 Revision 变为 READY。"""
+
+        with self._lock:
+            record = self.revision_detail(revision_id)
+            if record.status != "APPROVED":
+                raise DomainError("CONFLICT", "Revision 当前不可标记为 READY")
+            self._ready_revisions[revision_id] = {"build_id": build_id, "bundle_checksum": bundle_checksum, "report_ref": report_ref, "storage_key": storage_key, "collection_name": collection_name, "collection_checksum": collection_checksum}
+            ready = replace(record, status="READY")
+            self._revisions[revision_id] = ready
+            return ready
 
     def _append_job_event_locked(self, job_id: str, *, event_type: str, stage: str, error_code: str | None = None) -> None:
         """在调用方持锁时按连续序号追加经契约校验的事件。"""

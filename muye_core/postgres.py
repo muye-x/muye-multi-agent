@@ -415,6 +415,23 @@ class PostgresCoreStore(CoreStore):
             cursor.execute("SELECT payload_json FROM job_events WHERE job_id = %s AND sequence > %s ORDER BY sequence", (job_id, after_sequence))
             return [JobEventV1.model_validate(row[0]) for row in cursor.fetchall()]
 
+    def mark_revision_ready(self, revision_id: str, *, build_id: str, bundle_checksum: str, report_ref: str, storage_key: str, collection_name: str, collection_checksum: str) -> RevisionRecord:
+        """原子记录成功构建、评测、Bundle，并将已审批 Revision 发布为 READY。"""
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            row = self._revision_row(cursor, revision_id)
+            if row is None:
+                raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
+            if row[4] != "APPROVED":
+                raise DomainError("CONFLICT", "Revision 当前不可标记为 READY")
+            cursor.execute("SELECT string_agg(asset_sha256, '' ORDER BY asset_id) FROM revision_sources WHERE revision_id = %s", (revision_id,))
+            document_checksum = _hash(cursor.fetchone()[0] or "")
+            cursor.execute("INSERT INTO knowledge_builds (build_id, revision_id, collection_name, document_set_checksum, collection_checksum, status, completed_at) VALUES (%s,%s,%s,%s,%s,'SUCCEEDED',now())", (build_id, revision_id, collection_name, document_checksum, collection_checksum))
+            cursor.execute("INSERT INTO evaluation_runs (evaluation_id, revision_id, build_id, report_key, metrics_json, passed, completed_at) VALUES (%s,%s,%s,%s,'{}'::jsonb,TRUE,now())", (f"evaluation_{token_hex(16)}", revision_id, build_id, report_ref))
+            cursor.execute("INSERT INTO revision_bundles (revision_id, bundle_checksum, storage_key, runtime_contract_version) VALUES (%s,%s,%s,'muye-runtime/1')", (revision_id, bundle_checksum, storage_key))
+            cursor.execute("UPDATE agent_revisions SET status = 'READY' WHERE revision_id = %s", (revision_id,))
+            return RevisionRecord(revision_id, row[0], row[1], row[3], AgentRevisionSpecV1.model_validate(row[2]), "READY")
+
     def suspend(self, actor: Principal, agent_id: str) -> AgentRecord:
         return self._set_agent_time(actor, agent_id, "suspended_at", "停用")
 

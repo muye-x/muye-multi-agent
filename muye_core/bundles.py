@@ -61,6 +61,16 @@ def verify_bundle(manifest: AgentRevisionBundleManifestV1, members: Mapping[str,
         raise DomainError("VALIDATION_ERROR", "Bundle checksum 校验失败", status_code=422)
 
 
+def bundle_artifact_members(
+    manifest: AgentRevisionBundleManifestV1,
+    members: Mapping[str, bytes],
+) -> dict[str, bytes]:
+    """生成 Artifact 持久化所需的四个成员，并在写入前重新校验内容。"""
+
+    verify_bundle(manifest, members)
+    return {"manifest.json": _canonical_json(manifest.model_dump(mode="json")), **dict(members)}
+
+
 def _canonical_json(value: object) -> bytes:
     """以跨进程稳定 JSON 编码固定 Bundle 成员内容。"""
 
