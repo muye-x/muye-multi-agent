@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from math import isfinite
 from secrets import token_hex, token_urlsafe
 from threading import RLock
 from typing import Any, Callable
@@ -140,7 +141,7 @@ class InMemoryCoreStore(CoreStore):
         self._jobs: dict[str, object] = {}
         self._jobs_by_key: dict[tuple[str, str, str], str] = {}
         self._job_events: dict[str, list[object]] = {}
-        self._ready_revisions: dict[str, dict[str, str]] = {}
+        self._ready_revisions: dict[str, dict[str, object]] = {}
         self._audit_events: list[AuditEvent] = []
         self._lock = RLock()
 
@@ -213,7 +214,7 @@ class InMemoryCoreStore(CoreStore):
         with self._lock:
             if slug in self._agent_by_slug:
                 raise DomainError("CONFLICT", "slug 已永久保留")
-            agent = AgentRecord(f"agent_{token_urlsafe(12).lower()}", slug, display_name.strip(), description.strip(), actor.user_id)
+            agent = AgentRecord(f"agent_{token_hex(16)}", slug, display_name.strip(), description.strip(), actor.user_id)
             draft = DraftRecord(agent.agent_id, 1, config, actor.user_id)
             self._agents[agent.agent_id] = agent
             self._agent_by_slug[slug] = agent.agent_id
@@ -402,13 +403,15 @@ class InMemoryCoreStore(CoreStore):
                 raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
             return job
 
-    def claim_job(self, *, worker_id: str, lease_seconds: int = 60):
+    def claim_job(self, *, worker_id: str, lease_seconds: int = 60, job_types: frozenset[str] | None = None):
         """领取最早可执行 Job，并为 Worker 建立有限 lease。"""
 
         from .jobs import claim
 
         with self._lock:
             for job_id in sorted(self._jobs):
+                if job_types is not None and self._jobs[job_id].job_type not in job_types:
+                    continue
                 try:
                     claimed = claim(self._jobs[job_id], worker_id=worker_id, now=_now(), lease_seconds=lease_seconds)
                 except DomainError:
@@ -448,16 +451,29 @@ class InMemoryCoreStore(CoreStore):
             self.job_detail(job_id)
             return [event for event in self._job_events[job_id] if event.sequence > after_sequence]
 
-    def mark_revision_ready(self, revision_id: str, *, build_id: str, bundle_checksum: str, report_ref: str, storage_key: str, collection_name: str, collection_checksum: str) -> RevisionRecord:
-        """仅由评测通过的 Worker 将已审批 Revision 变为 READY。"""
+    def publish_revision_ready(self, *, worker_id: str, job_id: str, revision_id: str, build_id: str, bundle_checksum: str, report_ref: str, storage_key: str, collection_name: str, collection_checksum: str, pass_rate: float) -> RevisionRecord:
+        """以当前 BUILD Job 的 lease 原子发布 Bundle、评测证据和 READY Revision。"""
 
         with self._lock:
+            from .jobs import complete
+
+            if not isfinite(pass_rate) or not 0 <= pass_rate <= 1:
+                raise DomainError("VALIDATION_ERROR", "评测通过率必须是 0 到 1 之间的有限数值", status_code=422)
+            job = self.job_detail(job_id)
+            if job.revision_id != revision_id or job.job_type != "BUILD":
+                raise DomainError("CONFLICT", "Job 与 Revision 不匹配")
+            if job.status == "CANCEL_REQUESTED":
+                raise DomainError("CONFLICT", "Job 已请求取消")
+            if job.status != "RUNNING" or job.lease_owner != worker_id:
+                raise DomainError("CONFLICT", "Worker 不持有 Job lease")
             record = self.revision_detail(revision_id)
             if record.status != "APPROVED":
                 raise DomainError("CONFLICT", "Revision 当前不可标记为 READY")
-            self._ready_revisions[revision_id] = {"build_id": build_id, "bundle_checksum": bundle_checksum, "report_ref": report_ref, "storage_key": storage_key, "collection_name": collection_name, "collection_checksum": collection_checksum}
+            self._ready_revisions[revision_id] = {"build_id": build_id, "bundle_checksum": bundle_checksum, "report_ref": report_ref, "storage_key": storage_key, "collection_name": collection_name, "collection_checksum": collection_checksum, "pass_rate": pass_rate}
             ready = replace(record, status="READY")
             self._revisions[revision_id] = ready
+            self._jobs[job_id] = complete(job, worker_id=worker_id, status="SUCCEEDED")
+            self._append_job_event_locked(job_id, event_type="completed", stage="finished")
             return ready
 
     def _append_job_event_locked(self, job_id: str, *, event_type: str, stage: str, error_code: str | None = None) -> None:

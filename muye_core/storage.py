@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import os
 from pathlib import Path
+import shutil
 import tempfile
 from typing import BinaryIO
 
@@ -63,15 +64,18 @@ class ArtifactStore:
                 os.fsync(destination.fileno())
             checksum = digest.hexdigest()
             storage_key = f"assets/{checksum[:2]}/{checksum}"
-            destination_path = self._root / storage_key
-            destination_path.parent.mkdir(parents=True, exist_ok=True)
-            if destination_path.parent.is_symlink() or not destination_path.parent.is_dir():
-                raise AssetValidationError("Asset 目录必须是普通目录")
+            destination_path = self._resolve_key(storage_key, must_exist=False)
+            self._create_directory_chain(destination_path.parent)
             if destination_path.exists():
                 if destination_path.is_symlink() or not destination_path.is_file():
                     raise AssetValidationError("目标 Asset 不是普通文件")
                 return StoredAsset(checksum, size_bytes, storage_key, reused=True)
-            os.replace(temporary_path, destination_path)
+            try:
+                os.replace(temporary_path, destination_path)
+            except FileExistsError:
+                if destination_path.is_symlink() or not destination_path.is_file():
+                    raise AssetValidationError("目标 Asset 不是普通文件")
+                return StoredAsset(checksum, size_bytes, storage_key, reused=True)
             return StoredAsset(checksum, size_bytes, storage_key, reused=False)
         finally:
             temporary_path.unlink(missing_ok=True)
@@ -98,8 +102,7 @@ class ArtifactStore:
         storage_key = f"bundles/{agent_id}/{revision_id}/{bundle_checksum}"
         destination = self._resolve_key(storage_key, must_exist=False)
         if destination.exists():
-            if destination.is_symlink() or not destination.is_dir():
-                raise AssetValidationError("Bundle 目标不是普通目录")
+            self._verify_bundle_directory(destination, members)
             return storage_key
         temporary = Path(tempfile.mkdtemp(prefix="bundle-", dir=self._root))
         try:
@@ -109,16 +112,16 @@ class ArtifactStore:
                     stream.write(content)
                     stream.flush()
                     os.fsync(stream.fileno())
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if destination.parent.is_symlink() or not destination.parent.is_dir():
-                raise AssetValidationError("Bundle 目录必须是普通目录")
-            os.replace(temporary, destination)
+            self._create_directory_chain(destination.parent)
+            try:
+                os.replace(temporary, destination)
+            except FileExistsError:
+                # 并发发布同一 checksum 时，胜出的目录必须仍与本次内容完全一致。
+                self._verify_bundle_directory(destination, members)
             return storage_key
         finally:
             if temporary.exists():
-                for path in temporary.iterdir():
-                    path.unlink(missing_ok=True)
-                temporary.rmdir()
+                shutil.rmtree(temporary)
 
     def _resolve_key(self, storage_key: str, *, must_exist: bool = True) -> Path:
         """把数据库逻辑 key 映射到根目录内路径，阻断任意绝对路径和 traversal。"""
@@ -129,9 +132,37 @@ class ArtifactStore:
         if any(part in {"", ".", ".."} for part in parts):
             raise AssetValidationError("Artifact storage key 非法")
         self.readiness()
-        path = self._root.joinpath(*parts)
-        if path.parent.is_symlink():
-            raise AssetValidationError("Artifact 父目录不能是符号链接")
+        path = self._root
+        for part in parts:
+            path /= part
+            if path.is_symlink():
+                raise AssetValidationError("Artifact 路径不能包含符号链接")
         if must_exist and not path.exists():
             raise AssetValidationError("Artifact 不存在")
         return path
+
+    def _create_directory_chain(self, directory: Path) -> None:
+        """逐层创建 Artifact 目录，避免 mkdir 跟随中间 symlink 离开根目录。"""
+
+        relative = directory.relative_to(self._root)
+        current = self._root
+        for part in relative.parts:
+            current /= part
+            if current.is_symlink():
+                raise AssetValidationError("Artifact 路径不能包含符号链接")
+            current.mkdir(exist_ok=True)
+            if current.is_symlink() or not current.is_dir():
+                raise AssetValidationError("Bundle 目录必须是普通目录")
+
+    @staticmethod
+    def _verify_bundle_directory(directory: Path, members: dict[str, bytes]) -> None:
+        """验证可重用 Bundle 没有额外成员且每个成员都与本次校验内容一致。"""
+
+        if directory.is_symlink() or not directory.is_dir():
+            raise AssetValidationError("Bundle 目标不是普通目录")
+        paths = list(directory.iterdir())
+        if {path.name for path in paths} != set(members):
+            raise AssetValidationError("已存在 Bundle 成员不完整")
+        for path in paths:
+            if path.is_symlink() or not path.is_file() or path.read_bytes() != members[path.name]:
+                raise AssetValidationError("已存在 Bundle 内容不匹配")

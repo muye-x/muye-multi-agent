@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Protocol
 
 from contracts.v3 import AgentRevisionSpecV1, RuntimeResourceBindingV1
 
-from .bundles import build_bundle, verify_bundle
+from .bundles import build_bundle, bundle_artifact_members, verify_bundle
 from .service import DomainError
 
 
@@ -46,6 +47,8 @@ class ReadyRevisionOutput:
     build_id: str
     report_ref: str
     resources: list[RuntimeResourceBindingV1]
+    pass_rate: float
+    bundle_members: dict[str, bytes]
 
 
 def build_and_evaluate(spec: AgentRevisionSpecV1, backend: KnowledgeBackend) -> ReadyRevisionOutput:
@@ -59,6 +62,8 @@ def build_and_evaluate(spec: AgentRevisionSpecV1, backend: KnowledgeBackend) -> 
     if not build.resources:
         raise DomainError("RETRIEVAL_UNAVAILABLE", "知识构建未返回可用资源")
     evaluation = backend.evaluate(spec, build)
+    if not isfinite(evaluation.pass_rate) or not 0 <= evaluation.pass_rate <= 1:
+        raise DomainError("VALIDATION_ERROR", "评测通过率必须是 0 到 1 之间的有限数值", status_code=422)
     if not evaluation.passed or evaluation.pass_rate < spec.evaluation.minimum_pass_rate:
         raise DomainError("EVALUATION_FAILED", "固定评测未达到 Revision 门禁")
     manifest, members = build_bundle(
@@ -68,4 +73,11 @@ def build_and_evaluate(spec: AgentRevisionSpecV1, backend: KnowledgeBackend) -> 
         evaluation_summary={"passed": True, "pass_rate": evaluation.pass_rate, "report_ref": evaluation.report_ref},
     )
     verify_bundle(manifest, members)
-    return ReadyRevisionOutput(manifest.bundle_checksum, build.build_id, evaluation.report_ref, build.resources)
+    return ReadyRevisionOutput(
+        manifest.bundle_checksum,
+        build.build_id,
+        evaluation.report_ref,
+        build.resources,
+        evaluation.pass_rate,
+        bundle_artifact_members(manifest, members),
+    )

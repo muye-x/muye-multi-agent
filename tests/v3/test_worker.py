@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from pathlib import Path
 
 from contracts.v3 import RuntimeResourceBindingV1
 from muye_core.knowledge import EvaluationOutput, KnowledgeBuildOutput
 from muye_core.service import InMemoryCoreStore
+from muye_core.storage import ArtifactStore
 from muye_core.worker import KnowledgeJobWorker
 
 
@@ -39,19 +41,51 @@ def _approved_revision(store: InMemoryCoreStore):
     return admin, store.approve_revision(admin, revision.revision_id, revision.checksum)
 
 
-def test_worker_marks_ready_only_after_evaluation_passes() -> None:
+def test_worker_marks_ready_only_after_evaluation_passes(tmp_path: Path) -> None:
     store = InMemoryCoreStore()
     admin, revision = _approved_revision(store)
     job = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-1")
-    KnowledgeJobWorker(store=store, backend=_Backend(passed=True), worker_id="worker_1").run_once()
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    KnowledgeJobWorker(store=store, backend=_Backend(passed=True), artifact_store=artifacts, worker_id="worker_1").run_once()
     assert store.job_detail(job.job_id).status == "SUCCEEDED"
     assert store.revision_detail(revision.revision_id).status == "READY"
+    storage_key = store._ready_revisions[revision.revision_id]["storage_key"]
+    assert artifacts.read_bytes(f"{storage_key}/manifest.json")
 
 
-def test_worker_blocks_ready_when_evaluation_fails() -> None:
+def test_worker_blocks_ready_when_evaluation_fails(tmp_path: Path) -> None:
     store = InMemoryCoreStore()
     admin, revision = _approved_revision(store)
     job = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-2")
-    KnowledgeJobWorker(store=store, backend=_Backend(passed=False), worker_id="worker_1").run_once()
+    KnowledgeJobWorker(store=store, backend=_Backend(passed=False), artifact_store=ArtifactStore(tmp_path / "artifacts"), worker_id="worker_1").run_once()
     assert store.job_detail(job.job_id).status == "FAILED"
+    assert store.revision_detail(revision.revision_id).status == "APPROVED"
+
+
+def test_worker_does_not_consume_evaluation_jobs(tmp_path: Path) -> None:
+    """BUILD Worker 只能领取自身支持的 Job 类型。"""
+
+    store = InMemoryCoreStore()
+    admin, revision = _approved_revision(store)
+    evaluation = store.create_job(admin, revision_id=revision.revision_id, job_type="EVALUATE", idempotency_key="evaluate-1")
+    build = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-3")
+    KnowledgeJobWorker(store=store, backend=_Backend(passed=True), artifact_store=ArtifactStore(tmp_path / "artifacts"), worker_id="worker_1").run_once()
+    assert store.job_detail(build.job_id).status == "SUCCEEDED"
+    assert store.job_detail(evaluation.job_id).status == "PENDING"
+
+
+def test_worker_cancellation_does_not_publish_ready_revision(tmp_path: Path) -> None:
+    """Artifact 写入与数据库发布之间的取消不得产生 READY Revision。"""
+
+    store = InMemoryCoreStore()
+    admin, revision = _approved_revision(store)
+    job = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-4")
+
+    class CancellingArtifactStore(ArtifactStore):
+        def store_bundle(self, **kwargs):
+            store.request_job_cancel(admin, job.job_id)
+            return super().store_bundle(**kwargs)
+
+    KnowledgeJobWorker(store=store, backend=_Backend(passed=True), artifact_store=CancellingArtifactStore(tmp_path / "artifacts"), worker_id="worker_1").run_once()
+    assert store.job_detail(job.job_id).status == "CANCELLED"
     assert store.revision_detail(revision.revision_id).status == "APPROVED"

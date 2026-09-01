@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from math import isfinite
 from secrets import token_hex, token_urlsafe
 from typing import Any, Callable
 
@@ -108,7 +109,7 @@ class PostgresCoreStore(CoreStore):
 
     def create_agent(self, actor: Principal, *, slug: str, display_name: str, description: str, config: dict[str, object]) -> tuple[AgentRecord, DraftRecord]:
         self._admin(actor)
-        agent = AgentRecord(f"agent_{token_urlsafe(12).lower()}", slug, display_name.strip(), description.strip(), actor.user_id)
+        agent = AgentRecord(f"agent_{token_hex(16)}", slug, display_name.strip(), description.strip(), actor.user_id)
         draft = DraftRecord(agent.agent_id, 1, config, actor.user_id)
         try:
             with self._connection() as connection, connection.cursor() as cursor:
@@ -323,7 +324,7 @@ class PostgresCoreStore(CoreStore):
                 raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
             return JobRecord(*row)
 
-    def claim_job(self, *, worker_id: str, lease_seconds: int = 60):
+    def claim_job(self, *, worker_id: str, lease_seconds: int = 60, job_types: frozenset[str] | None = None):
         """以 SKIP LOCKED 领取唯一 Job，避免多个 Worker 重复执行。"""
 
         from .jobs import JobRecord
@@ -335,8 +336,9 @@ class PostgresCoreStore(CoreStore):
                 """
                 WITH candidate AS (
                     SELECT job_id FROM jobs
-                    WHERE status = 'PENDING'
-                       OR (status IN ('RUNNING', 'CANCEL_REQUESTED') AND lease_until <= now())
+                    WHERE (status = 'PENDING'
+                       OR (status IN ('RUNNING', 'CANCEL_REQUESTED') AND lease_until <= now()))
+                      AND (%s::text[] IS NULL OR job_type = ANY(%s))
                     ORDER BY created_at, job_id
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -350,7 +352,7 @@ class PostgresCoreStore(CoreStore):
                 RETURNING jobs.job_id, jobs.job_type, jobs.revision_id, jobs.idempotency_key, jobs.status,
                           jobs.attempt, jobs.lease_owner, jobs.lease_until, jobs.error_code
                 """,
-                (worker_id, lease_seconds),
+                (list(job_types) if job_types is not None else None, list(job_types) if job_types is not None else None, worker_id, lease_seconds),
             )
             row = cursor.fetchone()
             if row is None:
@@ -415,11 +417,24 @@ class PostgresCoreStore(CoreStore):
             cursor.execute("SELECT payload_json FROM job_events WHERE job_id = %s AND sequence > %s ORDER BY sequence", (job_id, after_sequence))
             return [JobEventV1.model_validate(row[0]) for row in cursor.fetchall()]
 
-    def mark_revision_ready(self, revision_id: str, *, build_id: str, bundle_checksum: str, report_ref: str, storage_key: str, collection_name: str, collection_checksum: str) -> RevisionRecord:
-        """原子记录成功构建、评测、Bundle，并将已审批 Revision 发布为 READY。"""
+    def publish_revision_ready(self, *, worker_id: str, job_id: str, revision_id: str, build_id: str, bundle_checksum: str, report_ref: str, storage_key: str, collection_name: str, collection_checksum: str, pass_rate: float) -> RevisionRecord:
+        """在 Job lease 仍有效时原子持久化评测证据、Bundle、READY 和成功终态。"""
 
+        if not isfinite(pass_rate) or not 0 <= pass_rate <= 1:
+            raise DomainError("VALIDATION_ERROR", "评测通过率必须是 0 到 1 之间的有限数值", status_code=422)
         with self._connection() as connection, connection.cursor() as cursor:
-            row = self._revision_row(cursor, revision_id)
+            cursor.execute("SELECT job_type, revision_id, status, lease_owner FROM jobs WHERE job_id = %s FOR UPDATE", (job_id,))
+            job = cursor.fetchone()
+            if job is None:
+                raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
+            if job[0] != "BUILD" or job[1] != revision_id:
+                raise DomainError("CONFLICT", "Job 与 Revision 不匹配")
+            if job[2] == "CANCEL_REQUESTED":
+                raise DomainError("CONFLICT", "Job 已请求取消")
+            if job[2] != "RUNNING" or job[3] != worker_id:
+                raise DomainError("CONFLICT", "Worker 不持有 Job lease")
+            cursor.execute("SELECT agent_id, revision_number, spec_json, checksum, status FROM agent_revisions WHERE revision_id = %s FOR UPDATE", (revision_id,))
+            row = cursor.fetchone()
             if row is None:
                 raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
             if row[4] != "APPROVED":
@@ -427,9 +442,11 @@ class PostgresCoreStore(CoreStore):
             cursor.execute("SELECT string_agg(asset_sha256, '' ORDER BY asset_id) FROM revision_sources WHERE revision_id = %s", (revision_id,))
             document_checksum = _hash(cursor.fetchone()[0] or "")
             cursor.execute("INSERT INTO knowledge_builds (build_id, revision_id, collection_name, document_set_checksum, collection_checksum, status, completed_at) VALUES (%s,%s,%s,%s,%s,'SUCCEEDED',now())", (build_id, revision_id, collection_name, document_checksum, collection_checksum))
-            cursor.execute("INSERT INTO evaluation_runs (evaluation_id, revision_id, build_id, report_key, metrics_json, passed, completed_at) VALUES (%s,%s,%s,%s,'{}'::jsonb,TRUE,now())", (f"evaluation_{token_hex(16)}", revision_id, build_id, report_ref))
+            cursor.execute("INSERT INTO evaluation_runs (evaluation_id, revision_id, build_id, report_key, metrics_json, passed, completed_at) VALUES (%s,%s,%s,%s,%s::jsonb,TRUE,now())", (f"evaluation_{token_hex(16)}", revision_id, build_id, report_ref, json.dumps({"pass_rate": pass_rate})))
             cursor.execute("INSERT INTO revision_bundles (revision_id, bundle_checksum, storage_key, runtime_contract_version) VALUES (%s,%s,%s,'muye-runtime/1')", (revision_id, bundle_checksum, storage_key))
             cursor.execute("UPDATE agent_revisions SET status = 'READY' WHERE revision_id = %s", (revision_id,))
+            cursor.execute("UPDATE jobs SET status = 'SUCCEEDED', completed_at = now(), lease_owner = NULL, lease_until = NULL WHERE job_id = %s", (job_id,))
+            self._append_job_event(cursor, job_id, event_type="completed", stage="finished")
             return RevisionRecord(revision_id, row[0], row[1], row[3], AgentRevisionSpecV1.model_validate(row[2]), "READY")
 
     def suspend(self, actor: Principal, agent_id: str) -> AgentRecord:

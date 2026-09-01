@@ -10,7 +10,7 @@ import pytest
 from contracts.v3 import AgentRevisionSpecV1, RuntimeResourceBindingV1
 from muye_core.bundles import build_bundle, bundle_artifact_members, verify_bundle
 from muye_core.service import DomainError
-from muye_core.storage import ArtifactStore
+from muye_core.storage import ArtifactStore, AssetValidationError
 
 
 def _spec() -> AgentRevisionSpecV1:
@@ -51,3 +51,25 @@ def test_bundle_artifact_is_atomically_reusable(tmp_path: Path) -> None:
     key = store.store_bundle(agent_id=manifest.agent_id, revision_id=manifest.revision_id, bundle_checksum=manifest.bundle_checksum, members=artifact_members)
     assert store.read_bytes(f"{key}/manifest.json") == artifact_members["manifest.json"]
     assert store.store_bundle(agent_id=manifest.agent_id, revision_id=manifest.revision_id, bundle_checksum=manifest.bundle_checksum, members=artifact_members) == key
+
+
+def test_bundle_storage_rejects_tampering_and_intermediate_symlinks(tmp_path: Path) -> None:
+    """复用只接受逐字节一致的 Bundle，任何中间 symlink 都不得离开根目录。"""
+
+    resource = RuntimeResourceBindingV1(resource_id="kb.hotel_employee", collection_name="kb_hotel_employee_revision_2", collection_checksum="5" * 64, embedding_alias="embedding_default")
+    manifest, members = build_bundle(spec=_spec(), build_id="build_hotel_revision_2", resources=[resource], evaluation_summary={"passed": True, "pass_rate": 1.0})
+    artifact_members = bundle_artifact_members(manifest, members)
+    root = tmp_path / "artifacts"
+    store = ArtifactStore(root)
+    key = store.store_bundle(agent_id=manifest.agent_id, revision_id=manifest.revision_id, bundle_checksum=manifest.bundle_checksum, members=artifact_members)
+    (root / key / "revision.json").write_bytes(b"tampered")
+    with pytest.raises(AssetValidationError, match="内容不匹配"):
+        store.store_bundle(agent_id=manifest.agent_id, revision_id=manifest.revision_id, bundle_checksum=manifest.bundle_checksum, members=artifact_members)
+
+    unsafe_root = tmp_path / "unsafe-artifacts"
+    unsafe_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (unsafe_root / "bundles").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(AssetValidationError, match="符号链接"):
+        ArtifactStore(unsafe_root).store_bundle(agent_id=manifest.agent_id, revision_id=manifest.revision_id, bundle_checksum=manifest.bundle_checksum, members=artifact_members)

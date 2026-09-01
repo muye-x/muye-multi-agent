@@ -13,8 +13,9 @@ from muye_core.service import DomainError
 
 
 class _Backend:
-    def __init__(self, *, passed: bool) -> None:
+    def __init__(self, *, passed: bool, pass_rate: float | None = None) -> None:
         self._passed = passed
+        self._pass_rate = pass_rate
 
     def build(self, _spec: AgentRevisionSpecV1) -> KnowledgeBuildOutput:
         return KnowledgeBuildOutput(
@@ -23,7 +24,7 @@ class _Backend:
         )
 
     def evaluate(self, _spec: AgentRevisionSpecV1, _build: KnowledgeBuildOutput) -> EvaluationOutput:
-        return EvaluationOutput(passed=self._passed, pass_rate=1.0 if self._passed else 0.0, report_ref="evaluations/revision/report.json")
+        return EvaluationOutput(passed=self._passed, pass_rate=self._pass_rate if self._pass_rate is not None else (1.0 if self._passed else 0.0), report_ref="evaluations/revision/report.json")
 
 
 def _spec() -> AgentRevisionSpecV1:
@@ -38,3 +39,10 @@ def test_knowledge_workflow_only_returns_bundle_after_passing_evaluation() -> No
     output = build_and_evaluate(_spec(), _Backend(passed=True))
     assert len(output.bundle_checksum) == 64
     assert output.build_id == "build_hotel_revision_2"
+
+
+def test_knowledge_workflow_rejects_non_finite_evaluation_rate() -> None:
+    """NaN 不得借由浮点比较语义绕过发布门禁。"""
+
+    with pytest.raises(DomainError, match="有限"):
+        build_and_evaluate(_spec(), _Backend(passed=True, pass_rate=float("nan")))

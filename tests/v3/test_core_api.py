@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+import re
 
 import httpx
 import pytest
 
+import muye_core.service as service_module
+from contracts.models import AGENT_ID_PATTERN
 from muye_core.api import create_app
 from muye_core.service import InMemoryCoreStore
 from muye_core.storage import ArtifactStore, AssetValidationError
@@ -84,6 +87,16 @@ def test_artifact_store_reuses_content_and_rejects_unsafe_names(tmp_path: Path) 
     linked_root.symlink_to(root_target, target_is_directory=True)
     with pytest.raises(AssetValidationError, match="普通目录"):
         ArtifactStore(linked_root).readiness()
+
+
+def test_agent_id_generation_never_uses_urlsafe_prefix_characters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """URL-safe token 可以以 '-' 或 '_' 开头，但 Agent 契约不允许该形式。"""
+
+    monkeypatch.setattr(service_module, "token_urlsafe", lambda _size: "_invalid-prefix")
+    store = InMemoryCoreStore()
+    admin = store.bootstrap_admin("admin", "correct-horse-battery")
+    agent, _ = store.create_agent(admin, slug="stable-agent-id", display_name="助手", description="测试", config={})
+    assert re.fullmatch(AGENT_ID_PATTERN, agent.agent_id)
 
 
 @pytest.mark.anyio
