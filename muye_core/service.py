@@ -209,6 +209,12 @@ class InMemoryCoreStore(CoreStore):
             self._grants[user_id] = frozenset(agent_ids)
             return self._grants[user_id]
 
+    def has_grant(self, user_id: str, agent_id: str) -> bool:
+        """在每次 Runtime 调用前读取实时 grant，撤权立即生效。"""
+
+        with self._lock:
+            return agent_id in self._grants.get(user_id, frozenset())
+
     def create_agent(self, actor: Principal, *, slug: str, display_name: str, description: str, config: dict[str, object]) -> tuple[AgentRecord, DraftRecord]:
         self._admin(actor)
         with self._lock:

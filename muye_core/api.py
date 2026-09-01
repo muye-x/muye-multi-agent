@@ -30,18 +30,20 @@ from .models import (
     RevisionApprovalRequest,
     RevisionFreezeRequest,
     RevisionResponse,
+    RuntimeInvokeRequest,
     SourceUploadResponse,
     UserCreateRequest,
 )
 from .service import CoreStore, DomainError, Principal
 from .storage import ArtifactStore, AssetValidationError
+from .runtime import RuntimeInvoker
 
 
 logger = logging.getLogger(__name__)
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)]
 
 
-def create_app(*, store: CoreStore, artifact_root: Path) -> FastAPI:
+def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: RuntimeInvoker | None = None) -> FastAPI:
     """创建 v3 API；生产调用方必须显式注入持久化仓储与 Artifact 根目录。"""
 
     service = store
@@ -104,6 +106,13 @@ def create_app(*, store: CoreStore, artifact_root: Path) -> FastAPI:
     @app.get("/metrics", response_class=PlainTextResponse)
     async def metrics() -> str:
         return "muye_core_up 1\n"
+
+    @app.post("/api/v3/agents/{agent_id}/invoke")
+    async def invoke_agent(agent_id: str, request: RuntimeInvokeRequest, http_request: Request, principal: Principal = Depends(current_principal)) -> JSONResponse:
+        if runtime_invoker is None:
+            raise DomainError("AGENT_INACTIVE", "Agent Runtime 当前未配置", status_code=409)
+        result = await runtime_invoker.invoke(principal, agent_id=agent_id, request_id=_request_id(http_request), session_id=request.session_id, task=request.task)
+        return JSONResponse(result.model_dump(mode="json"))
 
     @app.post("/api/v3/auth/login", response_model=AccessTokenResponse)
     async def login(request: LoginRequest, response: Response) -> AccessTokenResponse:

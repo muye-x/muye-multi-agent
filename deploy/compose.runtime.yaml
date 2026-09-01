@@ -1,0 +1,24 @@
+services:
+  knowledge-agent-runtime:
+    build:
+      context: ..
+      dockerfile: knowledge_agent_runtime/Dockerfile
+    read_only: true
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    tmpfs: [/tmp:rw,noexec,nosuid,size=64m]
+    expose: ["8000"]
+    networks: [agent-runtime]
+    environment:
+      MUYE_RUNTIME_BUNDLE_DIR: /run/muye/bundle
+    volumes:
+      - type: bind
+        source: ${MUYE_RUNTIME_BUNDLE_PATH:?set_bundle_path}
+        target: /run/muye/bundle
+        read_only: true
+
+networks:
+  agent-runtime:
+    internal: true

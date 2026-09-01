@@ -107,6 +107,13 @@ class PostgresCoreStore(CoreStore):
                 cursor.execute("INSERT INTO user_agent_grants (user_id, agent_id, created_by) VALUES (%s, %s, %s)", (user_id, agent_id, actor.user_id))
         return frozenset(agent_ids)
 
+    def has_grant(self, user_id: str, agent_id: str) -> bool:
+        """以数据库事实表实时复核调用 grant，不缓存授权决定。"""
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM user_agent_grants WHERE user_id = %s AND agent_id = %s", (user_id, agent_id))
+            return cursor.fetchone() is not None
+
     def create_agent(self, actor: Principal, *, slug: str, display_name: str, description: str, config: dict[str, object]) -> tuple[AgentRecord, DraftRecord]:
         self._admin(actor)
         agent = AgentRecord(f"agent_{token_hex(16)}", slug, display_name.strip(), description.strip(), actor.user_id)

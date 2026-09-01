@@ -117,6 +117,13 @@ class JobCreateRequest(ApiModel):
     job_type: str = Field(pattern=r"^(BUILD|EVALUATE)$")
 
 
+class RuntimeInvokeRequest(ApiModel):
+    """已认证用户向 Active Runtime 发起的一次受控知识调用。"""
+
+    session_id: str = Field(pattern=r"^session_[A-Za-z0-9_-]{8,128}$")
+    task: str = Field(min_length=1, max_length=20_000)
+
+
 class JobResponse(ApiModel):
     """可恢复 Job 的公开状态；lease owner 不向 API 客户端公开。"""
 
