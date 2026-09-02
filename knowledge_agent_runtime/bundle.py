@@ -33,6 +33,19 @@ class LoadedBundle:
 _MEMBER_NAMES = frozenset(
     {"manifest.json", "revision.json", "resource-snapshot.json", "evaluation-summary.json"}
 )
+_MAX_MEMBER_BYTES = 2 * 1024 * 1024
+
+
+def _read_member(root: Path, name: str) -> bytes:
+    """在分配内容缓冲区前限制单个 Bundle 成员大小。"""
+
+    path = root / name
+    if path.stat().st_size > _MAX_MEMBER_BYTES:
+        raise BundleLoadError("Bundle 成员超过大小上限")
+    content = path.read_bytes()
+    if len(content) > _MAX_MEMBER_BYTES:
+        raise BundleLoadError("Bundle 成员超过大小上限")
+    return content
 
 
 def load_bundle(root: Path) -> LoadedBundle:
@@ -46,8 +59,8 @@ def load_bundle(root: Path) -> LoadedBundle:
     if any(entry.is_symlink() or not entry.is_file() for entry in entries):
         raise BundleLoadError("Bundle 成员必须是普通文件")
     try:
-        manifest = AgentRevisionBundleManifestV1.model_validate_json((root / "manifest.json").read_bytes())
-        members = {name: (root / name).read_bytes() for name in _MEMBER_NAMES - {"manifest.json"}}
+        manifest = AgentRevisionBundleManifestV1.model_validate_json(_read_member(root, "manifest.json"))
+        members = {name: _read_member(root, name) for name in _MEMBER_NAMES - {"manifest.json"}}
         if revision_bundle_checksum(manifest, members) != manifest.bundle_checksum:
             raise BundleLoadError("Bundle checksum 校验失败")
         revision = AgentRevisionSpecV1.model_validate_json(members["revision.json"])
@@ -61,7 +74,7 @@ def load_bundle(root: Path) -> LoadedBundle:
         raise BundleLoadError("Bundle identity 不一致")
     if revision_spec_checksum(revision) != manifest.revision_checksum:
         raise BundleLoadError("Revision checksum 校验失败")
-    if evaluation.get("passed") is not True:
+    if not isinstance(evaluation, dict) or evaluation.get("passed") is not True:
         raise BundleLoadError("Bundle 未通过评测门禁")
     try:
         resources = tuple(RuntimeResourceBindingV1.model_validate(item) for item in snapshot["resources"])

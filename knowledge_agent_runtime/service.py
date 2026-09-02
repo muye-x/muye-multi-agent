@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -39,19 +39,29 @@ class RuntimeService:
         self._backend = backend
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._cancelled: set[str] = set()
+        self._requests: dict[str, asyncio.Task[object]] = {}
 
     @property
     def bundle(self) -> LoadedBundle:
         return self._bundle
 
     def cancel(self, request_id: str) -> None:
-        """记录取消意图；外部后端在每个受控边界之间被检查。"""
+        """中断正在等待下游的请求，而不是只记录无法传播的取消意图。"""
 
         self._cancelled.add(request_id)
+        task = self._requests.get(request_id)
+        if task is not None and not task.done():
+            task.cancel()
 
     async def invoke(self, request: RuntimeInvokeRequestV1) -> RuntimeInvokeResponseV1:
         """检索后仅依据命中资料生成回答，空召回和低分命中稳定拒答。"""
 
+        current_task = asyncio.current_task()
+        if current_task is None:
+            raise RuntimeError("Runtime 调用必须运行在 asyncio Task 中")
+        if request.request_id in self._requests:
+            return self._error(request.request_id, "REQUEST_IN_PROGRESS", "请求正在处理中。")
+        self._requests[request.request_id] = current_task
         async with self._semaphore:
             try:
                 self._raise_if_cancelled(request.request_id)
@@ -76,15 +86,64 @@ class RuntimeService:
                     citations=[item.citation for item in evidence],
                 )
             except asyncio.CancelledError:
-                raise
+                return self._refused(request.request_id, "REQUEST_CANCELLED", "请求已取消。")
             except RuntimeInvocationError as exc:
                 return self._refused(request.request_id, exc.code, exc.message)
             except TimeoutError:
-                return self._refused(request.request_id, "RUNTIME_TIMEOUT", "请求处理超时。")
+                return self._error(request.request_id, "RUNTIME_TIMEOUT", "请求处理超时。")
             except Exception:
-                return self._refused(request.request_id, "DEPENDENCY_UNAVAILABLE", "知识服务暂时不可用。")
+                return self._error(request.request_id, "DEPENDENCY_UNAVAILABLE", "知识服务暂时不可用。")
             finally:
                 self._cancelled.discard(request.request_id)
+                self._requests.pop(request.request_id, None)
+
+    async def is_ready(self) -> bool:
+        """Readiness 必须确认 Core 边界实际可达，不能只看静态配置。"""
+
+        check = getattr(self._backend, "is_ready", None)
+        return bool(await check()) if check is not None else bool(getattr(self._backend, "ready", False))
+
+    async def stream(self, request: RuntimeInvokeRequestV1) -> AsyncIterator[str | RuntimeInvokeResponseV1]:
+        """生成时逐段输出；取消会直接中断当前下游 await/迭代。"""
+
+        current_task = asyncio.current_task()
+        if current_task is None:
+            raise RuntimeError("Runtime 调用必须运行在 asyncio Task 中")
+        if request.request_id in self._requests:
+            yield self._error(request.request_id, "REQUEST_IN_PROGRESS", "请求正在处理中。")
+            return
+        self._requests[request.request_id] = current_task
+        try:
+            async with self._semaphore:
+                self._raise_if_cancelled(request.request_id)
+                evidence = await self._retrieve(request)
+                if not evidence:
+                    yield self._refused(request.request_id, "NO_EVIDENCE", "无法从已批准资料确认该问题。")
+                    return
+                stream_answer = getattr(self._backend, "answer_stream", None)
+                if stream_answer is None:
+                    content = await self._backend.answer(system_instruction=self._system_instruction(), task=request.task, evidence=evidence, max_tokens=self._bundle.revision.budgets.output_tokens)
+                    if not content.strip():
+                        yield self._error(request.request_id, "MODEL_EMPTY_RESPONSE", "未获得可用回答。")
+                        return
+                    yield content.strip()
+                else:
+                    async for delta in stream_answer(system_instruction=self._system_instruction(), task=request.task, evidence=evidence, max_tokens=self._bundle.revision.budgets.output_tokens):
+                        self._raise_if_cancelled(request.request_id)
+                        if delta:
+                            yield delta
+                yield RuntimeInvokeResponseV1(schema_version="muye.ai/runtime-invoke-response/v1", request_id=request.request_id, status="success", content="ok", citations=[item.citation for item in evidence])
+        except asyncio.CancelledError:
+            yield self._refused(request.request_id, "REQUEST_CANCELLED", "请求已取消。")
+        except RuntimeInvocationError as exc:
+            yield self._refused(request.request_id, exc.code, exc.message)
+        except TimeoutError:
+            yield self._error(request.request_id, "RUNTIME_TIMEOUT", "请求处理超时。")
+        except Exception:
+            yield self._error(request.request_id, "DEPENDENCY_UNAVAILABLE", "知识服务暂时不可用。")
+        finally:
+            self._cancelled.discard(request.request_id)
+            self._requests.pop(request.request_id, None)
 
     async def _retrieve(self, request: RuntimeInvokeRequestV1) -> list[RetrievalEvidence]:
         revision = self._bundle.revision
@@ -118,6 +177,16 @@ class RuntimeService:
             schema_version="muye.ai/runtime-invoke-response/v1",
             request_id=request_id,
             status="refused",
+            error_code=code,
+            error_message=message,
+        )
+
+    @staticmethod
+    def _error(request_id: str, code: str, message: str) -> RuntimeInvokeResponseV1:
+        return RuntimeInvokeResponseV1(
+            schema_version="muye.ai/runtime-invoke-response/v1",
+            request_id=request_id,
+            status="error",
             error_code=code,
             error_message=message,
         )

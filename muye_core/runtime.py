@@ -110,6 +110,9 @@ class RuntimeInvoker:
             self._verify_capabilities(route, capabilities)
             result = await self._client.invoke(route, request)
             self._verify_result(route, request, result)
+            if self._is_dependency_failure(result):
+                self._record_failure(agent_id)
+                raise DomainError("RUNTIME_UNAVAILABLE", "Agent Runtime 暂时不可用", status_code=503)
             self._circuits[agent_id] = _Circuit()
             return result
         except DomainError:
@@ -146,3 +149,13 @@ class RuntimeInvoker:
         allowed_assets = {asset.asset_id for asset in route.revision.spec.source_assets}
         if any(citation.source_asset_id not in allowed_assets for citation in result.citations):
             raise ValueError("Runtime citation 不属于当前 Agent Revision")
+
+    @staticmethod
+    def _is_dependency_failure(result: RuntimeInvokeResponseV1) -> bool:
+        """业务拒答不影响熔断；基础设施、模型和超时错误必须计入失败。"""
+
+        return result.status == "error" or result.error_code in {
+            "DEPENDENCY_UNAVAILABLE",
+            "RUNTIME_TIMEOUT",
+            "MODEL_EMPTY_RESPONSE",
+        }

@@ -31,7 +31,9 @@ def create_app(service: RuntimeService) -> FastAPI:
 
     @app.get("/ready")
     async def ready(response: Response) -> dict[str, str]:
-        response.status_code = 200
+        if not await service.is_ready():
+            response.status_code = 503
+            return {"status": "not_ready"}
         return {"status": "ready", "revision_id": service.bundle.revision.revision_id}
 
     @app.get("/capabilities", response_model=RuntimeCapabilitiesV1)
@@ -74,14 +76,14 @@ async def _invoke_with_timeout(service: RuntimeService, request: RuntimeInvokeRe
         return RuntimeInvokeResponseV1(
             schema_version="muye.ai/runtime-invoke-response/v1",
             request_id=request.request_id,
-            status="refused",
+            status="error",
             error_code="RUNTIME_TIMEOUT",
             error_message="请求处理超时。",
         )
 
 
 async def _stream_response(service: RuntimeService, request: RuntimeInvokeRequestV1) -> AsyncIterator[str]:
-    """以冻结 Chat SSE 契约传输终态 Runtime 响应，不泄漏后端细节。"""
+    """以冻结 Chat SSE 契约传输增量 Runtime 响应，不泄漏后端细节。"""
 
     sequence = 0
     yield _sse(
@@ -93,41 +95,31 @@ async def _stream_response(service: RuntimeService, request: RuntimeInvokeReques
         )
     )
     sequence += 1
-    result = await _invoke_with_timeout(service, request)
-    if result.status == "success":
-        yield _sse(
-            ChatStreamEventV1(
-                schema_version="muye.ai/chat-stream-event/v1",
-                event_type="block_delta",
-                sequence=sequence,
-                session_id=request.session_id,
-                block_id="block_0000000000000001",
-                delta=result.content or "",
-            )
-        )
-        sequence += 1
-        yield _sse(
-            ChatStreamEventV1(
-                schema_version="muye.ai/chat-stream-event/v1",
-                event_type="done",
-                sequence=sequence,
-                session_id=request.session_id,
-                citations=result.citations,
-                total_tokens=0,
-            )
-        )
-    else:
+    try:
+        async with asyncio.timeout(service.bundle.revision.budgets.timeout_seconds):
+            async for item in service.stream(request):
+                if isinstance(item, str):
+                    yield _sse(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="block_delta", sequence=sequence, session_id=request.session_id, block_id="block_0000000000000001", delta=item))
+                    sequence += 1
+                elif item.status == "success":
+                    yield _sse(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="done", sequence=sequence, session_id=request.session_id, citations=item.citations, total_tokens=0))
+                    sequence += 1
+                else:
+                    yield _sse(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="error", sequence=sequence, session_id=request.session_id, error_code=item.error_code or "RUNTIME_ERROR", message=item.error_message or "请求失败。"))
+                    sequence += 1
+    except TimeoutError:
+        service.cancel(request.request_id)
         yield _sse(
             ChatStreamEventV1(
                 schema_version="muye.ai/chat-stream-event/v1",
                 event_type="error",
                 sequence=sequence,
                 session_id=request.session_id,
-                error_code=result.error_code or "RUNTIME_ERROR",
-                message=result.error_message or "请求失败。",
+                error_code="RUNTIME_TIMEOUT",
+                message="请求处理超时。",
             )
         )
-    sequence += 1
+        sequence += 1
     yield _sse(
         ChatStreamEventV1(
             schema_version="muye.ai/chat-stream-event/v1",

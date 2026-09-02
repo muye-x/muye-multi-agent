@@ -3,6 +3,8 @@ services:
     build:
       context: ..
       dockerfile: knowledge_agent_runtime/Dockerfile
+      args:
+        MUYE_RUNTIME_BASE_IMAGE: ${MUYE_RUNTIME_BASE_IMAGE:?set_a_digest_pinned_runtime_base_image}
     read_only: true
     user: "10001:10001"
     security_opt:
@@ -13,6 +15,7 @@ services:
     networks: [agent-runtime]
     environment:
       MUYE_RUNTIME_BUNDLE_DIR: /run/muye/bundle
+      MUYE_RUNTIME_CORE_BASE_URL: ${MUYE_RUNTIME_CORE_BASE_URL:?set_core_private_base_url}
     volumes:
       - type: bind
         source: ${MUYE_RUNTIME_BUNDLE_PATH:?set_bundle_path}

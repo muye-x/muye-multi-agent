@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, Header, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
+from contracts.v3 import RuntimeCitationV1
 
 from .models import (
     AccessTokenResponse,
@@ -37,13 +38,14 @@ from .models import (
 from .service import CoreStore, DomainError, Principal
 from .storage import ArtifactStore, AssetValidationError
 from .runtime import RuntimeInvoker
+from .knowledge_runtime import CoreEvidence, CoreKnowledgeBackend
 
 
 logger = logging.getLogger(__name__)
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)]
 
 
-def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: RuntimeInvoker | None = None) -> FastAPI:
+def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: RuntimeInvoker | None = None, runtime_backend: CoreKnowledgeBackend | None = None) -> FastAPI:
     """创建 v3 API；生产调用方必须显式注入持久化仓储与 Artifact 根目录。"""
 
     service = store
@@ -113,6 +115,31 @@ def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: Runtim
             raise DomainError("AGENT_INACTIVE", "Agent Runtime 当前未配置", status_code=409)
         result = await runtime_invoker.invoke(principal, agent_id=agent_id, request_id=_request_id(http_request), session_id=request.session_id, task=request.task)
         return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/internal/v1/runtime/retrieve")
+    async def runtime_retrieve(payload: dict[str, object]) -> dict[str, object]:
+        if runtime_backend is None:
+            raise DomainError("RUNTIME_UNAVAILABLE", "Core 知识后端当前未配置", status_code=503)
+        resource_id, query, top_k, pipeline = payload.get("resource_id"), payload.get("query"), payload.get("top_k"), payload.get("pipeline")
+        if not isinstance(resource_id, str) or not isinstance(query, str) or not isinstance(top_k, int) or not isinstance(pipeline, str) or not 1 <= top_k <= 100:
+            raise DomainError("VALIDATION_ERROR", "Runtime 检索请求无效", status_code=422)
+        evidence = await runtime_backend.retrieve(resource_id=resource_id, query=query, top_k=top_k, pipeline=pipeline)
+        return {"evidence": [{"citation": item.citation.model_dump(mode="json"), "content": item.content, "score": item.score} for item in evidence]}
+
+    @app.post("/internal/v1/runtime/answer")
+    async def runtime_answer(payload: dict[str, object]) -> dict[str, str]:
+        if runtime_backend is None:
+            raise DomainError("RUNTIME_UNAVAILABLE", "Core 知识后端当前未配置", status_code=503)
+        system_instruction, task, raw_evidence, max_tokens = payload.get("system_instruction"), payload.get("task"), payload.get("evidence"), payload.get("max_tokens")
+        if not isinstance(system_instruction, str) or not isinstance(task, str) or not isinstance(raw_evidence, list) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 65_536:
+            raise DomainError("VALIDATION_ERROR", "Runtime 生成请求无效", status_code=422)
+        try:
+            evidence = [CoreEvidence(RuntimeCitationV1.model_validate(item["citation"]), item["content"], float(item["score"])) for item in raw_evidence if isinstance(item, dict) and isinstance(item.get("content"), str) and isinstance(item.get("score"), (int, float))]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DomainError("VALIDATION_ERROR", "Runtime 证据格式无效", status_code=422) from exc
+        if len(evidence) != len(raw_evidence):
+            raise DomainError("VALIDATION_ERROR", "Runtime 证据格式无效", status_code=422)
+        return {"content": await runtime_backend.answer(system_instruction=system_instruction, task=task, evidence=evidence, max_tokens=max_tokens)}
 
     @app.post("/api/v3/auth/login", response_model=AccessTokenResponse)
     async def login(request: LoginRequest, response: Response) -> AccessTokenResponse:

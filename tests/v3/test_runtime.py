@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from pathlib import Path
+import asyncio
 
 import httpx
 import pytest
@@ -54,6 +55,14 @@ class _Backend:
         return "年假需要审批。"
 
 
+class _SlowBackend(_Backend):
+    ready = True
+
+    async def retrieve(self, **_kwargs) -> list[RetrievalEvidence]:
+        await asyncio.Event().wait()
+        return []
+
+
 def _request() -> RuntimeInvokeRequestV1:
     return RuntimeInvokeRequestV1(schema_version="muye.ai/runtime-invoke-request/v1", request_id="request_0123456789abcdef", session_id="session_01234567", user_id="usr_test", task="年假如何申请？")
 
@@ -96,6 +105,19 @@ async def test_runtime_stream_uses_v3_sse_contract(tmp_path: Path) -> None:
     assert "event: session_end" in response.text
 
 
+@pytest.mark.anyio
+async def test_runtime_cancellation_interrupts_pending_backend_call_and_readiness_is_explicit(tmp_path: Path) -> None:
+    bundle, _ = _loaded_bundle(tmp_path)
+    service = RuntimeService(bundle, _SlowBackend([]))
+    task = asyncio.create_task(service.invoke(_request()))
+    await asyncio.sleep(0)
+    service.cancel(_request().request_id)
+    assert (await task).error_code == "REQUEST_CANCELLED"
+    app = create_app(RuntimeService(bundle, _Backend([])))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/ready")).status_code == 503
+
+
 def _approved_revision(store: InMemoryCoreStore):
     admin = store.bootstrap_admin("admin", "correct-horse-battery")
     source = b"handbook"
@@ -119,6 +141,11 @@ class _RuntimeClient:
         return RuntimeInvokeResponseV1(schema_version="muye.ai/runtime-invoke-response/v1", request_id=request.request_id, status="success", content="回答", citations=[RuntimeCitationV1(citation_id="cite.test", source_asset_id=self.citation_asset_id, locator="line:1")])
 
 
+class _FailingRuntimeClient(_RuntimeClient):
+    async def invoke(self, route: RuntimeRoute, request: RuntimeInvokeRequestV1) -> RuntimeInvokeResponseV1:
+        return RuntimeInvokeResponseV1(schema_version="muye.ai/runtime-invoke-response/v1", request_id=request.request_id, status="error", error_code="DEPENDENCY_UNAVAILABLE", error_message="temporary")
+
+
 @pytest.mark.anyio
 async def test_core_runtime_invoker_enforces_grants_and_citation_scope() -> None:
     store = InMemoryCoreStore()
@@ -138,3 +165,17 @@ async def test_core_runtime_invoker_enforces_grants_and_citation_scope() -> None
     client.citation_asset_id = "asset_ffffffffffffffff"
     with pytest.raises(DomainError, match="暂时不可用"):
         await invoker.invoke(user, agent_id=agent.agent_id, request_id="request_0123456789abcdea", session_id="session_01234567", task="问题")
+
+
+@pytest.mark.anyio
+async def test_core_runtime_invoker_opens_circuit_for_runtime_dependency_errors() -> None:
+    store = InMemoryCoreStore()
+    admin, agent, revision = _approved_revision(store)
+    store.replace_grants(admin, admin.user_id, [agent.agent_id])
+    invoker = RuntimeInvoker(store, _FailingRuntimeClient(revision, revision.spec.source_assets[0].asset_id), failure_threshold=2)
+    invoker.set_route(RuntimeRoute(agent.agent_id, revision, "http://runtime.test"))
+    for request_id in ("request_0123456789abcdef", "request_0123456789abcdee"):
+        with pytest.raises(DomainError, match="暂时不可用"):
+            await invoker.invoke(admin, agent_id=agent.agent_id, request_id=request_id, session_id="session_01234567", task="问题")
+    with pytest.raises(DomainError, match="熔断"):
+        await invoker.invoke(admin, agent_id=agent.agent_id, request_id="request_0123456789abcdea", session_id="session_01234567", task="问题")
