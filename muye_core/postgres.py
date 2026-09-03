@@ -754,6 +754,11 @@ class PostgresCoreStore(CoreStore):
                 raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
             if row[4] != "APPROVED":
                 raise DomainError("CONFLICT", "Revision 当前不可标记为 READY")
+            spec = AgentRevisionSpecV1.model_validate(row[2])
+            # Worker 负责执行评测，但持久化边界仍必须独立复核门禁，避免异常或
+            # 恶意 Worker 直接把低于 Revision 要求的结果发布为 READY。
+            if pass_rate < spec.evaluation.minimum_pass_rate:
+                raise DomainError("EVALUATION_FAILED", "固定评测未达到 Revision 门禁")
             cursor.execute("SELECT string_agg(asset_sha256, '' ORDER BY asset_id) FROM revision_sources WHERE revision_id = %s", (revision_id,))
             document_checksum = _hash(cursor.fetchone()[0] or "")
             cursor.execute("INSERT INTO knowledge_builds (build_id, revision_id, collection_name, document_set_checksum, collection_checksum, status, completed_at) VALUES (%s,%s,%s,%s,%s,'SUCCEEDED',now())", (build_id, revision_id, collection_name, document_checksum, collection_checksum))
@@ -762,7 +767,7 @@ class PostgresCoreStore(CoreStore):
             cursor.execute("UPDATE agent_revisions SET status = 'READY' WHERE revision_id = %s", (revision_id,))
             cursor.execute("UPDATE jobs SET status = 'SUCCEEDED', completed_at = now(), lease_owner = NULL, lease_until = NULL WHERE job_id = %s", (job_id,))
             self._append_job_event(cursor, job_id, event_type="completed", stage="finished")
-            return RevisionRecord(revision_id, row[0], row[1], row[3], AgentRevisionSpecV1.model_validate(row[2]), "READY")
+            return RevisionRecord(revision_id, row[0], row[1], row[3], spec, "READY")
 
     def suspend(self, actor: Principal, agent_id: str) -> AgentRecord:
         return self._set_agent_time(actor, agent_id, "suspended_at", "停用")
