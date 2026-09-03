@@ -147,6 +147,7 @@ def build_resource_manifest(
                 "source_locator": "source_locators",
                 "source_locators": "source_locators",
                 "source_file_id": "source_file_id",
+                "source_asset_id": "metadata.source_asset_id",
                 "knowledge_version_id": "knowledge_version_id",
             },
             filterable_fields={"knowledge_version_id": "knowledge_version_id"},

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import json
 import os
 from pathlib import Path
 import shutil
@@ -122,6 +123,76 @@ class ArtifactStore:
         finally:
             if temporary.exists():
                 shutil.rmtree(temporary)
+
+    def store_evaluation_report(self, *, revision_id: str, build_id: str, report: dict[str, object]) -> str:
+        """以规范 JSON 原子保存不含资料正文的评测报告。"""
+
+        if not revision_id.startswith("revision_") or not build_id.startswith("build_"):
+            raise AssetValidationError("评测报告身份非法")
+        content = (json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        storage_key = f"evaluations/{revision_id}/{build_id}/report.json"
+        destination = self._resolve_key(storage_key, must_exist=False)
+        self._create_directory_chain(destination.parent)
+        if destination.exists():
+            if destination.is_symlink() or not destination.is_file() or destination.read_bytes() != content:
+                raise AssetValidationError("已存在评测报告内容不匹配")
+            return storage_key
+        file_descriptor, temporary_name = tempfile.mkstemp(prefix="evaluation-", dir=destination.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(file_descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, destination)
+            return storage_key
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def read_cache_json(self, storage_key: str) -> object | None:
+        """读取受控构建缓存；不存在时返回 ``None``，损坏时拒绝静默重建。"""
+
+        self._validate_cache_key(storage_key)
+        path = self._resolve_key(storage_key, must_exist=False)
+        if not path.exists():
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise AssetValidationError("构建缓存必须是普通文件")
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AssetValidationError("构建缓存内容损坏") from exc
+
+    def store_cache_json(self, storage_key: str, value: object) -> None:
+        """原子写入确定性构建缓存，并拒绝同 identity 的内容漂移。"""
+
+        self._validate_cache_key(storage_key)
+        content = (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        destination = self._resolve_key(storage_key, must_exist=False)
+        self._create_directory_chain(destination.parent)
+        if destination.exists():
+            if destination.is_symlink() or not destination.is_file() or destination.read_bytes() != content:
+                raise AssetValidationError("构建缓存 identity 对应内容漂移")
+            return
+        descriptor, temporary_name = tempfile.mkstemp(prefix="cache-", dir=destination.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                os.link(temporary, destination)
+            except FileExistsError:
+                if destination.read_bytes() != content:
+                    raise AssetValidationError("构建缓存 identity 对应内容漂移")
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _validate_cache_key(storage_key: str) -> None:
+        if not storage_key.startswith(("parsed/", "embedding-cache/")) or not storage_key.endswith(".json"):
+            raise AssetValidationError("构建缓存 storage key 非法")
 
     def _resolve_key(self, storage_key: str, *, must_exist: bool = True) -> Path:
         """把数据库逻辑 key 映射到根目录内路径，阻断任意绝对路径和 traversal。"""

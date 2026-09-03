@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from contracts.v3 import RuntimeResourceBindingV1
 from muye_core.knowledge import EvaluationOutput, KnowledgeBuildOutput
 from muye_core.service import InMemoryCoreStore
 from muye_core.storage import ArtifactStore
 from muye_core.worker import KnowledgeJobWorker
+from muye_core.service import DomainError
 
 
 class _Backend:
@@ -62,16 +67,15 @@ def test_worker_blocks_ready_when_evaluation_fails(tmp_path: Path) -> None:
     assert store.revision_detail(revision.revision_id).status == "APPROVED"
 
 
-def test_worker_does_not_consume_evaluation_jobs(tmp_path: Path) -> None:
-    """BUILD Worker 只能领取自身支持的 Job 类型。"""
+def test_worker_consumes_evaluation_jobs_without_a_separate_stuck_queue(tmp_path: Path) -> None:
+    """EVALUATE 使用同一幂等构建链路，不能永久停留在 PENDING。"""
 
     store = InMemoryCoreStore()
     admin, revision = _approved_revision(store)
     evaluation = store.create_job(admin, revision_id=revision.revision_id, job_type="EVALUATE", idempotency_key="evaluate-1")
-    build = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-3")
     KnowledgeJobWorker(store=store, backend=_Backend(passed=True), artifact_store=ArtifactStore(tmp_path / "artifacts"), worker_id="worker_1").run_once()
-    assert store.job_detail(build.job_id).status == "SUCCEEDED"
-    assert store.job_detail(evaluation.job_id).status == "PENDING"
+    assert store.job_detail(evaluation.job_id).status == "SUCCEEDED"
+    assert store.revision_detail(revision.revision_id).status == "READY"
 
 
 def test_worker_cancellation_does_not_publish_ready_revision(tmp_path: Path) -> None:
@@ -89,3 +93,63 @@ def test_worker_cancellation_does_not_publish_ready_revision(tmp_path: Path) -> 
     KnowledgeJobWorker(store=store, backend=_Backend(passed=True), artifact_store=CancellingArtifactStore(tmp_path / "artifacts"), worker_id="worker_1").run_once()
     assert store.job_detail(job.job_id).status == "CANCELLED"
     assert store.revision_detail(revision.revision_id).status == "APPROVED"
+
+
+def test_worker_skips_build_when_cancelled_before_claim_processing(tmp_path: Path) -> None:
+    """领取前已取消的 Job 不得触发解析、Embedding 或 Milvus 副作用。"""
+
+    store = InMemoryCoreStore()
+    admin, revision = _approved_revision(store)
+    job = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-cancelled-before-run")
+    store.request_job_cancel(admin, job.job_id)
+
+    class Backend:
+        def build(self, _spec):
+            raise AssertionError("已取消 Job 不应执行知识构建")
+
+        def evaluate(self, _spec, _build):
+            raise AssertionError("已取消 Job 不应执行评测")
+
+    KnowledgeJobWorker(
+        store=store,
+        backend=Backend(),
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+        worker_id="worker_1",
+    ).run_once()
+
+    assert store.job_detail(job.job_id).status == "CANCELLED"
+    assert store.revision_detail(revision.revision_id).status == "APPROVED"
+
+
+def test_failed_dependency_job_can_retry_as_new_attempt(tmp_path: Path) -> None:
+    store = InMemoryCoreStore()
+    admin, revision = _approved_revision(store)
+    original = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-retry-source")
+    claimed = store.claim_job(worker_id="worker_1")
+    assert claimed is not None
+    store.complete_job(worker_id="worker_1", job_id=original.job_id, status="FAILED", error_code="DEPENDENCY_UNAVAILABLE")
+
+    retried = store.retry_job(admin, original.job_id, idempotency_key="build-retry-target")
+
+    assert retried.job_id != original.job_id
+    assert retried.attempt == 2
+    assert retried.status == "PENDING"
+    assert store.retry_job(admin, original.job_id, idempotency_key="build-retry-target") == retried
+
+
+def test_non_recoverable_job_and_expired_lease_are_rejected() -> None:
+    store = InMemoryCoreStore()
+    admin, revision = _approved_revision(store)
+    job = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-terminal")
+    claimed = store.claim_job(worker_id="worker_1")
+    assert claimed is not None
+    store.complete_job(worker_id="worker_1", job_id=job.job_id, status="FAILED", error_code="EVALUATION_FAILED")
+    with pytest.raises(DomainError, match="不可重试"):
+        store.retry_job(admin, job.job_id, idempotency_key="retry-terminal")
+
+    second = store.create_job(admin, revision_id=revision.revision_id, job_type="BUILD", idempotency_key="build-expired")
+    leased = store.claim_job(worker_id="worker_1")
+    assert leased is not None and leased.job_id == second.job_id
+    store._jobs[second.job_id] = replace(leased, lease_until=datetime.now(UTC) - timedelta(seconds=1))
+    with pytest.raises(DomainError, match="有效 Job lease"):
+        store.complete_job(worker_id="worker_1", job_id=second.job_id, status="FAILED", error_code="WORKER_INTERRUPTED")

@@ -143,6 +143,7 @@ class KnowledgeChunkV1(ContractModel):
     knowledge_version_id: str = Field(pattern=r"^kv_[a-z0-9][a-z0-9_-]{2,63}$")
     document_id: str = Field(pattern=r"^doc_[a-f0-9]{16,64}$")
     source_file_id: str = Field(pattern=r"^file_[a-f0-9]{16,64}$")
+    source_asset_id: str | None = Field(default=None, pattern=r"^asset_[a-f0-9]{16,64}$")
     content: str = Field(min_length=1, max_length=12_000)
     title: str = Field(min_length=1, max_length=512)
     citation_id: str = Field(pattern=r"^citation_[a-f0-9]{16,64}$")

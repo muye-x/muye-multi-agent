@@ -15,6 +15,12 @@ from .service import DomainError
 
 
 TERMINAL_STATUSES = frozenset({"CANCELLED", "SUCCEEDED", "FAILED"})
+RETRYABLE_ERROR_CODES = frozenset(
+    {
+        "DEPENDENCY_UNAVAILABLE",
+        "WORKER_INTERRUPTED",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +33,7 @@ class JobRecord:
 
     job_id: str
     job_type: str
-    revision_id: str
+    revision_id: str | None
     idempotency_key: str
     status: str
     attempt: int
@@ -42,13 +48,45 @@ def claim(record: JobRecord, *, worker_id: str, now: datetime, lease_seconds: in
     if lease_seconds < 1:
         raise ValueError("lease_seconds 必须为正数")
     available = record.status == "PENDING" or (
-        record.status in {"RUNNING", "CANCEL_REQUESTED"}
+        record.status == "CANCEL_REQUESTED"
+        and (record.lease_until is None or record.lease_until <= now)
+    ) or (
+        record.status == "RUNNING"
         and record.lease_until is not None
         and record.lease_until <= now
     )
     if not available:
         raise DomainError("CONFLICT", "Job 当前不可领取")
     return replace(record, status="RUNNING" if record.status != "CANCEL_REQUESTED" else "CANCEL_REQUESTED", lease_owner=worker_id, lease_until=now + timedelta(seconds=lease_seconds))
+
+
+def renew(record: JobRecord, *, worker_id: str, now: datetime, lease_seconds: int) -> JobRecord:
+    """续租当前 Worker 持有的非终态 Job，失效 lease 不允许复活。"""
+
+    if lease_seconds < 1:
+        raise ValueError("lease_seconds 必须为正数")
+    if record.status not in {"RUNNING", "CANCEL_REQUESTED"}:
+        raise DomainError("CONFLICT", "Job 当前不可续租")
+    if record.lease_owner != worker_id or record.lease_until is None or record.lease_until <= now:
+        raise DomainError("CONFLICT", "Worker 不持有有效 Job lease")
+    return replace(record, lease_until=now + timedelta(seconds=lease_seconds))
+
+
+def retry(record: JobRecord, *, idempotency_key: str, job_id: str) -> JobRecord:
+    """从可恢复失败创建新 Attempt；原 Job 作为不可变审计记录保留。"""
+
+    if record.status != "FAILED" or record.error_code not in RETRYABLE_ERROR_CODES:
+        raise DomainError("CONFLICT", "Job 当前不可重试")
+    if not idempotency_key or len(idempotency_key) > 128:
+        raise DomainError("VALIDATION_ERROR", "Job 幂等键无效", status_code=422)
+    return JobRecord(
+        job_id=job_id,
+        job_type=record.job_type,
+        revision_id=record.revision_id,
+        idempotency_key=idempotency_key,
+        status="PENDING",
+        attempt=record.attempt + 1,
+    )
 
 
 def request_cancel(record: JobRecord) -> JobRecord:
@@ -64,8 +102,12 @@ def complete(record: JobRecord, *, worker_id: str, status: str, error_code: str 
 
     if status not in TERMINAL_STATUSES:
         raise ValueError("Job 终态无效")
-    if record.lease_owner != worker_id:
-        raise DomainError("CONFLICT", "Worker 不持有 Job lease")
+    if (
+        record.lease_owner != worker_id
+        or record.lease_until is None
+        or record.lease_until <= datetime.now(UTC)
+    ):
+        raise DomainError("CONFLICT", "Worker 不持有有效 Job lease")
     if record.status in TERMINAL_STATUSES:
         raise DomainError("CONFLICT", "Job 已处于终态")
     if record.status == "CANCEL_REQUESTED" and status != "CANCELLED":

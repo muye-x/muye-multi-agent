@@ -77,6 +77,18 @@ class DraftRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RevisionAssetRecord:
+    """构建 Worker 可读取的冻结 Asset 元数据；路径始终是逻辑 storage key。"""
+
+    asset_id: str
+    sha256: str
+    size_bytes: int
+    media_type: str
+    storage_key: str
+    display_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class RevisionRecord:
     """一个已冻结的 Agent 配置及其审批状态。
 
@@ -142,6 +154,7 @@ class InMemoryCoreStore(CoreStore):
         self._jobs_by_key: dict[tuple[str, str, str], str] = {}
         self._job_events: dict[str, list[object]] = {}
         self._ready_revisions: dict[str, dict[str, object]] = {}
+        self._profile_proposals: dict[str, dict[str, object]] = {}
         self._audit_events: list[AuditEvent] = []
         self._lock = RLock()
 
@@ -256,6 +269,28 @@ class InMemoryCoreStore(CoreStore):
             draft.updated_by = actor.user_id
             return draft
 
+    def draft_impact(self, actor: Principal, agent_id: str):
+        """分析当前 Draft 相对最近冻结 Revision 的构建影响。"""
+
+        self._admin(actor)
+        from .impact import analyze_draft_impact
+
+        with self._lock:
+            _agent, draft = self.agent_detail(agent_id)
+            if draft is None:
+                raise DomainError("NOT_FOUND", "开放 Draft 不存在", status_code=404)
+            base_revision = max(
+                (record for record in self._revisions.values() if record.agent_id == agent_id),
+                key=lambda record: record.revision_number,
+                default=None,
+            )
+            source_ids = [str(source["asset_id"]) for source in self._draft_sources.get(agent_id, [])]
+            return analyze_draft_impact(
+                draft_config=draft.config,
+                draft_asset_ids=source_ids,
+                base_revision=base_revision,
+            )
+
     def discard_draft(self, actor: Principal, agent_id: str) -> None:
         self._admin(actor)
         with self._lock:
@@ -306,6 +341,24 @@ class InMemoryCoreStore(CoreStore):
                 sources.append({"asset_id": asset_id, "display_name": display_name, "sort_order": len(sources)})
                 draft.version += 1
             return asset_id, reused
+
+    def remove_draft_asset(self, actor: Principal, agent_id: str, asset_id: str) -> None:
+        """只解除当前 Draft 绑定；共享 Asset 和冻结 Revision 保持不变。"""
+
+        self._admin(actor)
+        with self._lock:
+            agent, draft = self.agent_detail(agent_id)
+            if agent.archived_at or agent.suspended_at or draft is None:
+                raise DomainError("CONFLICT", "Agent 当前不能移除资料")
+            sources = self._draft_sources.get(agent_id, [])
+            retained = [source for source in sources if source["asset_id"] != asset_id]
+            if len(retained) == len(sources):
+                raise DomainError("NOT_FOUND", "Draft 资料不存在", status_code=404)
+            for index, source in enumerate(retained):
+                source["sort_order"] = index
+            self._draft_sources[agent_id] = retained
+            draft.version += 1
+            draft.updated_by = actor.user_id
 
     def freeze_revision(self, actor: Principal, agent_id: str, draft_version: int) -> RevisionRecord:
         """在 Draft 乐观锁与资料快照同时成立时创建待审 Revision。"""
@@ -376,6 +429,113 @@ class InMemoryCoreStore(CoreStore):
             raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
         return record
 
+    def revision_assets(self, revision_id: str) -> list[RevisionAssetRecord]:
+        """按 Revision 顺序返回冻结资料，并复核当前 Asset hash 未漂移。"""
+
+        with self._lock:
+            revision = self.revision_detail(revision_id)
+            records: list[RevisionAssetRecord] = []
+            for source in revision.spec.source_assets:
+                asset = self._assets.get(source.asset_id)
+                if asset is None or asset["sha256"] != source.sha256:
+                    raise DomainError("ASSET_DRIFT", "Revision 资料不存在或 checksum 漂移")
+                records.append(
+                    RevisionAssetRecord(
+                        asset_id=source.asset_id,
+                        sha256=str(asset["sha256"]),
+                        size_bytes=int(asset["size_bytes"]),
+                        media_type=str(asset["media_type"]),
+                        storage_key=str(asset["storage_key"]),
+                        display_name=source.display_name,
+                    )
+                )
+            return records
+
+    def create_profile_proposal_job(self, actor: Principal, agent_id: str, *, idempotency_key: str):
+        """为当前 Draft 创建异步 Proposal Job，并固定其 version。"""
+
+        self._admin(actor)
+        from .jobs import JobRecord
+
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise DomainError("VALIDATION_ERROR", "Job 幂等键无效", status_code=422)
+        with self._lock:
+            _agent, draft = self.agent_detail(agent_id)
+            if draft is None:
+                raise DomainError("NOT_FOUND", "开放 Draft 不存在", status_code=404)
+            if not self._draft_sources.get(agent_id):
+                raise DomainError("VALIDATION_ERROR", "Profile Proposal 至少需要一份资料", status_code=422)
+            key = ("PROFILE_PROPOSAL", agent_id, idempotency_key)
+            previous_id = self._jobs_by_key.get(key)
+            if previous_id is not None:
+                return self._jobs[previous_id]
+            job = JobRecord(f"job_{token_hex(16)}", "PROFILE_PROPOSAL", None, idempotency_key, "PENDING", 1)
+            self._jobs[job.job_id] = job
+            self._jobs_by_key[key] = job.job_id
+            self._job_events[job.job_id] = []
+            self._profile_proposals[job.job_id] = {
+                "proposal_id": f"proposal_{token_hex(16)}",
+                "agent_id": agent_id,
+                "draft_version": draft.version,
+                "proposal": None,
+            }
+            return job
+
+    def profile_proposal_input(self, job_id: str):
+        """返回创建 Job 时绑定的 Draft；版本变化会阻断陈旧 LLM 请求。"""
+
+        from .proposals import ProfileProposalInput
+
+        with self._lock:
+            request = self._profile_proposals.get(job_id)
+            if request is None:
+                raise DomainError("NOT_FOUND", "Profile Proposal Job 不存在", status_code=404)
+            agent, draft = self.agent_detail(str(request["agent_id"]))
+            if draft is None or draft.version != request["draft_version"]:
+                raise DomainError("DRAFT_CHANGED", "Draft 已变化，请重新生成 Profile Proposal")
+            assets: list[RevisionAssetRecord] = []
+            for source in self._draft_sources.get(agent.agent_id, []):
+                asset = self._assets[str(source["asset_id"])]
+                assets.append(
+                    RevisionAssetRecord(
+                        asset_id=str(source["asset_id"]),
+                        sha256=str(asset["sha256"]),
+                        size_bytes=int(asset["size_bytes"]),
+                        media_type=str(asset["media_type"]),
+                        storage_key=str(asset["storage_key"]),
+                        display_name=str(source["display_name"]),
+                    )
+                )
+            return ProfileProposalInput(job_id, agent, replace(draft), assets)
+
+    def publish_profile_proposal(self, *, worker_id: str, job_id: str, proposal: object) -> None:
+        """在 lease 与 Draft version 均有效时原子发布 Proposal。"""
+
+        with self._lock:
+            job = self.job_detail(job_id)
+            request = self._profile_proposals.get(job_id)
+            if request is None or job.job_type != "PROFILE_PROPOSAL":
+                raise DomainError("CONFLICT", "Job 不是 Profile Proposal")
+            _agent, draft = self.agent_detail(str(request["agent_id"]))
+            if draft is None or draft.version != request["draft_version"]:
+                raise DomainError("DRAFT_CHANGED", "Draft 已变化，请重新生成 Profile Proposal")
+            from .jobs import complete
+            from .proposals import ProfileProposalV1
+
+            value = ProfileProposalV1.model_validate(proposal)
+            if value.agent_id != request["agent_id"] or value.draft_version != request["draft_version"]:
+                raise DomainError("VALIDATION_ERROR", "Profile Proposal identity 不匹配", status_code=422)
+            self._jobs[job_id] = complete(job, worker_id=worker_id, status="SUCCEEDED")
+            request["proposal"] = value
+            self._append_job_event_locked(job_id, event_type="completed", stage="finished")
+
+    def profile_proposal(self, job_id: str):
+        with self._lock:
+            request = self._profile_proposals.get(job_id)
+            if request is None:
+                raise DomainError("NOT_FOUND", "Profile Proposal Job 不存在", status_code=404)
+            return request["proposal"]
+
     def create_job(self, actor: Principal, *, revision_id: str, job_type: str, idempotency_key: str):
         """创建或返回同一幂等键的构建/评测 Job。"""
 
@@ -388,8 +548,8 @@ class InMemoryCoreStore(CoreStore):
             raise DomainError("VALIDATION_ERROR", "Job 幂等键无效", status_code=422)
         with self._lock:
             revision = self.revision_detail(revision_id)
-            if job_type == "BUILD" and revision.status != "APPROVED":
-                raise DomainError("CONFLICT", "只有已审批 Revision 可以构建")
+            if revision.status != "APPROVED":
+                raise DomainError("CONFLICT", "只有已审批 Revision 可以构建或评测")
             key = (job_type, revision_id, idempotency_key)
             previous_id = self._jobs_by_key.get(key)
             if previous_id:
@@ -427,6 +587,44 @@ class InMemoryCoreStore(CoreStore):
                 return claimed
             return None
 
+    def renew_job_lease(self, *, worker_id: str, job_id: str, lease_seconds: int = 60):
+        """延长当前 Worker 的有效 lease，供长时间解析和 Embedding 使用。"""
+
+        from .jobs import renew
+
+        with self._lock:
+            updated = renew(
+                self.job_detail(job_id),
+                worker_id=worker_id,
+                now=_now(),
+                lease_seconds=lease_seconds,
+            )
+            self._jobs[job_id] = updated
+            return updated
+
+    def record_job_progress(
+        self,
+        *,
+        worker_id: str,
+        job_id: str,
+        stage: str,
+        current: int,
+        total: int,
+    ) -> None:
+        """在有效 lease 下追加可恢复进度事件。"""
+
+        with self._lock:
+            job = self.job_detail(job_id)
+            if job.lease_owner != worker_id or job.lease_until is None or job.lease_until <= _now():
+                raise DomainError("CONFLICT", "Worker 不持有有效 Job lease")
+            self._append_job_event_locked(
+                job_id,
+                event_type="progress",
+                stage=stage,
+                progress_current=current,
+                progress_total=total,
+            )
+
     def request_job_cancel(self, actor: Principal, job_id: str):
         """请求协作式取消，实际清理由当前 Worker 在安全检查点完成。"""
 
@@ -437,6 +635,35 @@ class InMemoryCoreStore(CoreStore):
             updated = request_cancel(self.job_detail(job_id))
             self._jobs[job_id] = updated
             return updated
+
+    def retry_job(self, actor: Principal, job_id: str, *, idempotency_key: str):
+        """从可恢复失败创建新 Attempt，相同幂等键返回同一结果。"""
+
+        self._admin(actor)
+        from .jobs import retry
+
+        with self._lock:
+            original = self.job_detail(job_id)
+            subject_id = original.revision_id
+            if original.job_type == "PROFILE_PROPOSAL":
+                subject_id = str(self._profile_proposals[original.job_id]["agent_id"])
+            key = (original.job_type, subject_id, idempotency_key)
+            previous_id = self._jobs_by_key.get(key)
+            if previous_id is not None:
+                return self._jobs[previous_id]
+            new_job = retry(original, idempotency_key=idempotency_key, job_id=f"job_{token_hex(16)}")
+            self._jobs[new_job.job_id] = new_job
+            self._jobs_by_key[key] = new_job.job_id
+            self._job_events[new_job.job_id] = []
+            if original.job_type == "PROFILE_PROPOSAL":
+                source = self._profile_proposals[original.job_id]
+                self._profile_proposals[new_job.job_id] = {
+                    "proposal_id": f"proposal_{token_hex(16)}",
+                    "agent_id": source["agent_id"],
+                    "draft_version": source["draft_version"],
+                    "proposal": None,
+                }
+            return new_job
 
     def complete_job(self, *, worker_id: str, job_id: str, status: str, error_code: str | None = None):
         """收敛 Worker Job，并追加唯一的终态事件。"""
@@ -466,12 +693,17 @@ class InMemoryCoreStore(CoreStore):
             if not isfinite(pass_rate) or not 0 <= pass_rate <= 1:
                 raise DomainError("VALIDATION_ERROR", "评测通过率必须是 0 到 1 之间的有限数值", status_code=422)
             job = self.job_detail(job_id)
-            if job.revision_id != revision_id or job.job_type != "BUILD":
+            if job.revision_id != revision_id or job.job_type not in {"BUILD", "EVALUATE"}:
                 raise DomainError("CONFLICT", "Job 与 Revision 不匹配")
             if job.status == "CANCEL_REQUESTED":
                 raise DomainError("CONFLICT", "Job 已请求取消")
-            if job.status != "RUNNING" or job.lease_owner != worker_id:
-                raise DomainError("CONFLICT", "Worker 不持有 Job lease")
+            if (
+                job.status != "RUNNING"
+                or job.lease_owner != worker_id
+                or job.lease_until is None
+                or job.lease_until <= _now()
+            ):
+                raise DomainError("CONFLICT", "Worker 不持有有效 Job lease")
             record = self.revision_detail(revision_id)
             if record.status != "APPROVED":
                 raise DomainError("CONFLICT", "Revision 当前不可标记为 READY")
@@ -482,13 +714,42 @@ class InMemoryCoreStore(CoreStore):
             self._append_job_event_locked(job_id, event_type="completed", stage="finished")
             return ready
 
-    def _append_job_event_locked(self, job_id: str, *, event_type: str, stage: str, error_code: str | None = None) -> None:
+    def revision_evaluation(self, revision_id: str) -> dict[str, object]:
+        """返回 READY Revision 的经裁剪评测与 Bundle 引用。"""
+
+        with self._lock:
+            self.revision_detail(revision_id)
+            result = self._ready_revisions.get(revision_id)
+            if result is None:
+                raise DomainError("NOT_FOUND", "Revision 尚无通过的评测", status_code=404)
+            return dict(result)
+
+    def _append_job_event_locked(
+        self,
+        job_id: str,
+        *,
+        event_type: str,
+        stage: str,
+        error_code: str | None = None,
+        progress_current: int | None = None,
+        progress_total: int | None = None,
+    ) -> None:
         """在调用方持锁时按连续序号追加经契约校验的事件。"""
 
         from .jobs import new_event
 
         events = self._job_events[job_id]
-        events.append(new_event(job_id=job_id, sequence=len(events), event_type=event_type, stage=stage, error_code=error_code))
+        events.append(
+            new_event(
+                job_id=job_id,
+                sequence=len(events),
+                event_type=event_type,
+                stage=stage,
+                error_code=error_code,
+                progress_current=progress_current,
+                progress_total=progress_total,
+            )
+        )
 
     def audit(self, *, actor_id: str | None, action: str, target_type: str, target_id: str, request_id: str, details: dict[str, object] | None = None) -> None:
         """记录已经脱敏的领域写操作；调用方不得传入密码、Token 或资料正文。"""

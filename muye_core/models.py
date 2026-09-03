@@ -70,6 +70,18 @@ class DraftResponse(ApiModel):
     config: dict[str, object]
 
 
+class DraftImpactResponse(ApiModel):
+    """服务端计算的 Draft 构建影响，不能由前端自行推断。"""
+
+    mode: str = Field(pattern=r"^(REUSE|INCREMENTAL|FULL_REBUILD)$")
+    base_revision_id: str | None = None
+    added_asset_ids: list[str]
+    removed_asset_ids: list[str]
+    reusable_asset_ids: list[str]
+    evaluation_required: bool
+    reasons: list[str]
+
+
 class AgentDetail(AgentSummary):
     draft: DraftResponse | None = None
 
@@ -129,7 +141,15 @@ class JobResponse(ApiModel):
 
     job_id: str
     job_type: str
-    revision_id: str
+    revision_id: str | None
     status: str
     attempt: int
     error_code: str | None = None
+
+
+class ProfileProposalResponse(ApiModel):
+    """异步 Proposal 的完成结果；PENDING/RUNNING 时 proposal 为空。"""
+
+    job_id: str
+    status: str
+    proposal: dict[str, object] | None = None

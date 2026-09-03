@@ -75,6 +75,7 @@ def test_v3_migration_plan_contains_core_and_knowledge_job_schema() -> None:
         (1, "phase1_core"),
         (2, "phase1_constraints"),
         (3, "phase2_knowledge_jobs"),
+        (4, "phase2_proposals"),
     ]
 
 

@@ -17,6 +17,7 @@ from .service import (
     DraftRecord,
     IdempotentResponse,
     Principal,
+    RevisionAssetRecord,
     RevisionRecord,
     TokenPair,
     _PASSWORD_HASHER,
@@ -153,6 +154,34 @@ class PostgresCoreStore(CoreStore):
                 raise DomainError("VERSION_CONFLICT", "Draft 不存在、不可编辑或已被更新")
             return DraftRecord(*row)
 
+    def draft_impact(self, actor: Principal, agent_id: str):
+        """在同一快照中比较开放 Draft、资料和最近冻结 Revision。"""
+
+        self._admin(actor)
+        from .impact import analyze_draft_impact
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT config_json FROM agent_drafts WHERE agent_id = %s", (agent_id,))
+            draft = cursor.fetchone()
+            if draft is None:
+                raise DomainError("NOT_FOUND", "开放 Draft 不存在", status_code=404)
+            cursor.execute(
+                "SELECT asset_id FROM draft_sources WHERE agent_id = %s ORDER BY sort_order",
+                (agent_id,),
+            )
+            source_ids = [row[0] for row in cursor.fetchall()]
+            cursor.execute(
+                "SELECT revision_id FROM agent_revisions WHERE agent_id = %s ORDER BY revision_number DESC LIMIT 1",
+                (agent_id,),
+            )
+            revision_row = cursor.fetchone()
+        base_revision = self.revision_detail(revision_row[0]) if revision_row else None
+        return analyze_draft_impact(
+            draft_config=draft[0],
+            draft_asset_ids=source_ids,
+            base_revision=base_revision,
+        )
+
     def discard_draft(self, actor: Principal, agent_id: str) -> None:
         self._admin(actor)
         with self._connection() as connection, connection.cursor() as cursor:
@@ -277,6 +306,162 @@ class PostgresCoreStore(CoreStore):
                 approval[0] if approval else None,
             )
 
+    def revision_assets(self, revision_id: str) -> list[RevisionAssetRecord]:
+        """读取冻结 Asset 元数据，数据库中的 hash 必须仍匹配 Revision 快照。"""
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT asset.asset_id, asset.sha256, asset.size_bytes, asset.media_type,
+                       asset.storage_key, source_spec.value->>'display_name', source.asset_sha256
+                FROM agent_revisions revision
+                CROSS JOIN LATERAL jsonb_array_elements(revision.spec_json->'source_assets')
+                    WITH ORDINALITY AS source_spec(value, position)
+                JOIN revision_sources source
+                  ON source.revision_id = revision.revision_id
+                 AND source.asset_id = source_spec.value->>'asset_id'
+                JOIN source_assets asset ON asset.asset_id = source.asset_id
+                WHERE revision.revision_id = %s
+                ORDER BY source_spec.position
+                """,
+                (revision_id,),
+            )
+            rows = cursor.fetchall()
+        if not rows:
+            self.revision_detail(revision_id)
+            raise DomainError("ASSET_DRIFT", "Revision 资料不存在或 checksum 漂移")
+        if any(row[1] != row[6] for row in rows):
+            raise DomainError("ASSET_DRIFT", "Revision 资料不存在或 checksum 漂移")
+        return [RevisionAssetRecord(*row[:6]) for row in rows]
+
+    def create_profile_proposal_job(self, actor: Principal, agent_id: str, *, idempotency_key: str):
+        """事务性创建绑定当前 Draft version 的异步 Proposal Job。"""
+
+        self._admin(actor)
+        from .jobs import JobRecord
+
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise DomainError("VALIDATION_ERROR", "Job 幂等键无效", status_code=422)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT version FROM agent_drafts WHERE agent_id = %s FOR UPDATE",
+                (agent_id,),
+            )
+            draft = cursor.fetchone()
+            if draft is None:
+                raise DomainError("NOT_FOUND", "开放 Draft 不存在", status_code=404)
+            cursor.execute("SELECT 1 FROM draft_sources WHERE agent_id = %s LIMIT 1", (agent_id,))
+            if cursor.fetchone() is None:
+                raise DomainError("VALIDATION_ERROR", "Profile Proposal 至少需要一份资料", status_code=422)
+            job_id = f"job_{token_hex(16)}"
+            cursor.execute(
+                """
+                INSERT INTO jobs (job_id, job_type, subject_id, revision_id, idempotency_key, status)
+                VALUES (%s, 'PROFILE_PROPOSAL', %s, NULL, %s, 'PENDING')
+                ON CONFLICT (job_type, subject_id, idempotency_key) DO NOTHING
+                RETURNING job_id, job_type, revision_id, idempotency_key, status, attempt,
+                          lease_owner, lease_until, error_code
+                """,
+                (job_id, agent_id, idempotency_key),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """
+                    SELECT job_id, job_type, revision_id, idempotency_key, status, attempt,
+                           lease_owner, lease_until, error_code
+                    FROM jobs WHERE job_type = 'PROFILE_PROPOSAL' AND subject_id = %s AND idempotency_key = %s
+                    """,
+                    (agent_id, idempotency_key),
+                )
+                return JobRecord(*cursor.fetchone())
+            cursor.execute(
+                "INSERT INTO profile_proposals (proposal_id, agent_id, draft_version, job_id) VALUES (%s,%s,%s,%s)",
+                (f"proposal_{token_hex(16)}", agent_id, draft[0], job_id),
+            )
+            return JobRecord(*row)
+
+    def profile_proposal_input(self, job_id: str):
+        """读取 Proposal Job 的一致 Draft 与资料；版本漂移立即失败。"""
+
+        from .proposals import ProfileProposalInput
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT proposal.agent_id, proposal.draft_version,
+                       agent.slug, agent.display_name, agent.description, agent.created_by,
+                       agent.archived_at, agent.suspended_at,
+                       draft.version, draft.config_json, draft.updated_by
+                FROM profile_proposals proposal
+                JOIN agents agent ON agent.agent_id = proposal.agent_id
+                JOIN agent_drafts draft ON draft.agent_id = proposal.agent_id
+                WHERE proposal.job_id = %s
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise DomainError("NOT_FOUND", "Profile Proposal Job 不存在", status_code=404)
+            if row[1] != row[8]:
+                raise DomainError("DRAFT_CHANGED", "Draft 已变化，请重新生成 Profile Proposal")
+            cursor.execute(
+                """
+                SELECT asset.asset_id, asset.sha256, asset.size_bytes, asset.media_type,
+                       asset.storage_key, source.display_name
+                FROM draft_sources source
+                JOIN source_assets asset ON asset.asset_id = source.asset_id
+                WHERE source.agent_id = %s ORDER BY source.sort_order
+                """,
+                (row[0],),
+            )
+            assets = [RevisionAssetRecord(*asset_row) for asset_row in cursor.fetchall()]
+        agent = AgentRecord(row[0], row[2], row[3], row[4], row[5], row[6], row[7])
+        draft = DraftRecord(row[0], row[8], row[9], row[10])
+        return ProfileProposalInput(job_id, agent, draft, assets)
+
+    def publish_profile_proposal(self, *, worker_id: str, job_id: str, proposal: object) -> None:
+        """同一事务写入严格 Proposal、完成 Job 并追加终态事件。"""
+
+        from .proposals import ProfileProposalV1
+
+        value = ProfileProposalV1.model_validate(proposal)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT proposal.draft_version, draft.version, proposal.agent_id
+                FROM profile_proposals proposal JOIN agent_drafts draft ON draft.agent_id = proposal.agent_id
+                JOIN jobs job ON job.job_id = proposal.job_id
+                WHERE proposal.job_id = %s AND job.job_type = 'PROFILE_PROPOSAL'
+                  AND job.status = 'RUNNING' AND job.lease_owner = %s AND job.lease_until > now()
+                FOR UPDATE OF proposal, job
+                """,
+                (job_id, worker_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise DomainError("CONFLICT", "Worker 不持有有效 Profile Proposal Job lease")
+            if row[0] != row[1] or value.draft_version != row[0]:
+                raise DomainError("DRAFT_CHANGED", "Draft 已变化，请重新生成 Profile Proposal")
+            if value.agent_id != row[2]:
+                raise DomainError("VALIDATION_ERROR", "Profile Proposal identity 不匹配", status_code=422)
+            cursor.execute(
+                "UPDATE profile_proposals SET proposal_json=%s::jsonb, proposal_checksum=%s, completed_at=now() WHERE job_id=%s",
+                (json.dumps(value.model_dump(mode="json")), value.proposal_checksum, job_id),
+            )
+            cursor.execute("UPDATE jobs SET status='SUCCEEDED', completed_at=now(), lease_owner=NULL, lease_until=NULL WHERE job_id=%s", (job_id,))
+            self._append_job_event(cursor, job_id, event_type="completed", stage="finished")
+
+    def profile_proposal(self, job_id: str):
+        from .proposals import ProfileProposalV1
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT proposal_json FROM profile_proposals WHERE job_id = %s", (job_id,))
+            row = cursor.fetchone()
+        if row is None:
+            raise DomainError("NOT_FOUND", "Profile Proposal Job 不存在", status_code=404)
+        return ProfileProposalV1.model_validate(row[0]) if row[0] is not None else None
+
     def create_job(self, actor: Principal, *, revision_id: str, job_type: str, idempotency_key: str):
         """事务性创建 Revision Job；相同业务输入只返回原 Job。"""
 
@@ -292,8 +477,8 @@ class PostgresCoreStore(CoreStore):
             revision = cursor.fetchone()
             if revision is None:
                 raise DomainError("NOT_FOUND", "Revision 不存在", status_code=404)
-            if job_type == "BUILD" and revision[0] != "APPROVED":
-                raise DomainError("CONFLICT", "只有已审批 Revision 可以构建")
+            if revision[0] != "APPROVED":
+                raise DomainError("CONFLICT", "只有已审批 Revision 可以构建或评测")
             job_id = f"job_{token_hex(16)}"
             cursor.execute(
                 """
@@ -344,7 +529,8 @@ class PostgresCoreStore(CoreStore):
                 WITH candidate AS (
                     SELECT job_id FROM jobs
                     WHERE (status = 'PENDING'
-                       OR (status IN ('RUNNING', 'CANCEL_REQUESTED') AND lease_until <= now()))
+                       OR (status = 'CANCEL_REQUESTED' AND (lease_until IS NULL OR lease_until <= now()))
+                       OR (status = 'RUNNING' AND lease_until <= now()))
                       AND (%s::text[] IS NULL OR job_type = ANY(%s))
                     ORDER BY created_at, job_id
                     FOR UPDATE SKIP LOCKED
@@ -368,6 +554,61 @@ class PostgresCoreStore(CoreStore):
             self._append_job_event(cursor, job.job_id, event_type="started", stage="claimed")
             return job
 
+    def renew_job_lease(self, *, worker_id: str, job_id: str, lease_seconds: int = 60):
+        """仅在原 lease 尚有效时续租，避免失去所有权的 Worker 复活。"""
+
+        if not worker_id or lease_seconds < 1:
+            raise ValueError("Worker 或 lease 参数无效")
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE jobs SET lease_until = now() + (%s * interval '1 second')
+                WHERE job_id = %s AND lease_owner = %s
+                  AND status IN ('RUNNING', 'CANCEL_REQUESTED')
+                  AND lease_until > now()
+                RETURNING job_id, job_type, revision_id, idempotency_key, status, attempt,
+                          lease_owner, lease_until, error_code
+                """,
+                (lease_seconds, job_id, worker_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise DomainError("CONFLICT", "Worker 不持有有效 Job lease")
+            from .jobs import JobRecord
+            return JobRecord(*row)
+
+    def record_job_progress(
+        self,
+        *,
+        worker_id: str,
+        job_id: str,
+        stage: str,
+        current: int,
+        total: int,
+    ) -> None:
+        """在锁定 Job 且 lease 有效时追加进度 checkpoint。"""
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1 FROM jobs
+                WHERE job_id = %s AND lease_owner = %s
+                  AND status IN ('RUNNING', 'CANCEL_REQUESTED') AND lease_until > now()
+                FOR UPDATE
+                """,
+                (job_id, worker_id),
+            )
+            if cursor.fetchone() is None:
+                raise DomainError("CONFLICT", "Worker 不持有有效 Job lease")
+            self._append_job_event(
+                cursor,
+                job_id,
+                event_type="progress",
+                stage=stage,
+                progress_current=current,
+                progress_total=total,
+            )
+
     def request_job_cancel(self, actor: Principal, job_id: str):
         """请求取消而不破坏 Worker 已开始的临界步骤。"""
 
@@ -388,6 +629,72 @@ class PostgresCoreStore(CoreStore):
             from .jobs import JobRecord
             return JobRecord(*row)
 
+    def retry_job(self, actor: Principal, job_id: str, *, idempotency_key: str):
+        """事务性创建可恢复失败的下一 Attempt。"""
+
+        self._admin(actor)
+        from .jobs import JobRecord, RETRYABLE_ERROR_CODES
+
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise DomainError("VALIDATION_ERROR", "Job 幂等键无效", status_code=422)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT job_id, job_type, revision_id, idempotency_key, status, attempt,
+                       lease_owner, lease_until, error_code
+                FROM jobs WHERE job_id = %s FOR UPDATE
+                """,
+                (job_id,),
+            )
+            original_row = cursor.fetchone()
+            if original_row is None:
+                raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
+            original = JobRecord(*original_row)
+            if original.status != "FAILED" or original.error_code not in RETRYABLE_ERROR_CODES:
+                raise DomainError("CONFLICT", "Job 当前不可重试")
+            cursor.execute("SELECT subject_id FROM jobs WHERE job_id = %s", (job_id,))
+            subject_id = cursor.fetchone()[0]
+            new_job_id = f"job_{token_hex(16)}"
+            cursor.execute(
+                """
+                INSERT INTO jobs
+                    (job_id, job_type, subject_id, revision_id, idempotency_key, status, attempt)
+                VALUES (%s, %s, %s, %s, %s, 'PENDING', %s)
+                ON CONFLICT (job_type, subject_id, idempotency_key) DO NOTHING
+                RETURNING job_id, job_type, revision_id, idempotency_key, status, attempt,
+                          lease_owner, lease_until, error_code
+                """,
+                (
+                    new_job_id,
+                    original.job_type,
+                    subject_id,
+                    original.revision_id,
+                    idempotency_key,
+                    original.attempt + 1,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """
+                    SELECT job_id, job_type, revision_id, idempotency_key, status, attempt,
+                           lease_owner, lease_until, error_code
+                    FROM jobs
+                    WHERE job_type = %s AND subject_id = %s AND idempotency_key = %s
+                    """,
+                    (original.job_type, subject_id, idempotency_key),
+                )
+                row = cursor.fetchone()
+            if original.job_type == "PROFILE_PROPOSAL" and row[0] == new_job_id:
+                cursor.execute(
+                    """
+                    INSERT INTO profile_proposals (proposal_id, agent_id, draft_version, job_id)
+                    SELECT %s, agent_id, draft_version, %s FROM profile_proposals WHERE job_id = %s
+                    """,
+                    (f"proposal_{token_hex(16)}", new_job_id, job_id),
+                )
+            return JobRecord(*row)
+
     def complete_job(self, *, worker_id: str, job_id: str, status: str, error_code: str | None = None):
         """持有 lease 的 Worker 追加终态，过期或取消后拒绝竞争写入。"""
 
@@ -399,6 +706,7 @@ class PostgresCoreStore(CoreStore):
                 UPDATE jobs SET status = %s, error_code = %s, completed_at = now(), lease_owner = NULL, lease_until = NULL
                 WHERE job_id = %s AND lease_owner = %s
                   AND status NOT IN ('CANCELLED', 'SUCCEEDED', 'FAILED')
+                  AND lease_until > now()
                   AND (status <> 'CANCEL_REQUESTED' OR %s = 'CANCELLED')
                 RETURNING job_id, job_type, revision_id, idempotency_key, status, attempt, lease_owner, lease_until, error_code
                 """,
@@ -430,16 +738,16 @@ class PostgresCoreStore(CoreStore):
         if not isfinite(pass_rate) or not 0 <= pass_rate <= 1:
             raise DomainError("VALIDATION_ERROR", "评测通过率必须是 0 到 1 之间的有限数值", status_code=422)
         with self._connection() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT job_type, revision_id, status, lease_owner FROM jobs WHERE job_id = %s FOR UPDATE", (job_id,))
+            cursor.execute("SELECT job_type, revision_id, status, lease_owner, lease_until FROM jobs WHERE job_id = %s FOR UPDATE", (job_id,))
             job = cursor.fetchone()
             if job is None:
                 raise DomainError("NOT_FOUND", "Job 不存在", status_code=404)
-            if job[0] != "BUILD" or job[1] != revision_id:
+            if job[0] not in {"BUILD", "EVALUATE"} or job[1] != revision_id:
                 raise DomainError("CONFLICT", "Job 与 Revision 不匹配")
             if job[2] == "CANCEL_REQUESTED":
                 raise DomainError("CONFLICT", "Job 已请求取消")
-            if job[2] != "RUNNING" or job[3] != worker_id:
-                raise DomainError("CONFLICT", "Worker 不持有 Job lease")
+            if job[2] != "RUNNING" or job[3] != worker_id or job[4] is None or job[4] <= _now():
+                raise DomainError("CONFLICT", "Worker 不持有有效 Job lease")
             cursor.execute("SELECT agent_id, revision_number, spec_json, checksum, status FROM agent_revisions WHERE revision_id = %s FOR UPDATE", (revision_id,))
             row = cursor.fetchone()
             if row is None:
@@ -487,6 +795,65 @@ class PostgresCoreStore(CoreStore):
             cursor.execute("INSERT INTO draft_sources (agent_id, asset_id, display_name, sort_order) SELECT %s, %s, %s, count(*) FROM draft_sources WHERE agent_id=%s ON CONFLICT (agent_id, asset_id) DO NOTHING", (agent_id, asset_id, display_name, agent_id))
             cursor.execute("UPDATE agent_drafts SET version=version+1, updated_by=%s, updated_at=now() WHERE agent_id=%s", (actor.user_id, agent_id))
         return asset_id, reused
+
+    def remove_draft_asset(self, actor: Principal, agent_id: str, asset_id: str) -> None:
+        """事务性解除 Draft 资料绑定并重排 sort_order。"""
+
+        self._admin(actor)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1 FROM agent_drafts draft
+                JOIN agents agent ON agent.agent_id = draft.agent_id
+                WHERE draft.agent_id = %s AND agent.archived_at IS NULL AND agent.suspended_at IS NULL
+                FOR UPDATE
+                """,
+                (agent_id,),
+            )
+            if cursor.fetchone() is None:
+                raise DomainError("CONFLICT", "Agent 当前不能移除资料")
+            cursor.execute("DELETE FROM draft_sources WHERE agent_id = %s AND asset_id = %s", (agent_id, asset_id))
+            if cursor.rowcount == 0:
+                raise DomainError("NOT_FOUND", "Draft 资料不存在", status_code=404)
+            cursor.execute(
+                """
+                WITH ordered AS (
+                    SELECT asset_id, row_number() OVER (ORDER BY sort_order, asset_id) - 1 AS new_order
+                    FROM draft_sources WHERE agent_id = %s
+                )
+                UPDATE draft_sources source SET sort_order = ordered.new_order
+                FROM ordered WHERE source.agent_id = %s AND source.asset_id = ordered.asset_id
+                """,
+                (agent_id, agent_id),
+            )
+            cursor.execute("UPDATE agent_drafts SET version=version+1, updated_by=%s, updated_at=now() WHERE agent_id=%s", (actor.user_id, agent_id))
+
+    def revision_evaluation(self, revision_id: str) -> dict[str, object]:
+        """查询通过门禁的评测摘要，不返回内部 Collection 地址。"""
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT build.build_id, evaluation.report_key, evaluation.metrics_json,
+                       bundle.bundle_checksum, bundle.storage_key
+                FROM evaluation_runs evaluation
+                JOIN knowledge_builds build ON build.build_id = evaluation.build_id
+                JOIN revision_bundles bundle ON bundle.revision_id = evaluation.revision_id
+                WHERE evaluation.revision_id = %s AND evaluation.passed IS TRUE
+                """,
+                (revision_id,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            self.revision_detail(revision_id)
+            raise DomainError("NOT_FOUND", "Revision 尚无通过的评测", status_code=404)
+        return {
+            "build_id": row[0],
+            "report_ref": row[1],
+            "pass_rate": float(row[2].get("pass_rate", 0)),
+            "bundle_checksum": row[3],
+            "storage_key": row[4],
+        }
 
     def audit(self, *, actor_id: str | None, action: str, target_type: str, target_id: str, request_id: str, details: dict[str, object] | None = None) -> None:
         with self._connection() as connection, connection.cursor() as cursor:
@@ -556,6 +923,8 @@ class PostgresCoreStore(CoreStore):
         event_type: str,
         stage: str,
         error_code: str | None = None,
+        progress_current: int | None = None,
+        progress_total: int | None = None,
     ) -> None:
         """在持有 Job 行锁的事务内生成连续且已校验的 JobEvent。"""
 
@@ -569,6 +938,8 @@ class PostgresCoreStore(CoreStore):
             event_type=event_type,
             stage=stage,
             error_code=error_code,
+            progress_current=progress_current,
+            progress_total=progress_total,
         )
         cursor.execute(
             "INSERT INTO job_events (job_id, sequence, event_type, payload_json) VALUES (%s, %s, %s, %s::jsonb)",

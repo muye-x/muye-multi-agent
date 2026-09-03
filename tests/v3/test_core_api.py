@@ -207,3 +207,108 @@ async def test_revision_freeze_snapshots_draft_and_requires_matching_checksum(cl
     resumed_events = await client.get(f"/api/v3/jobs/{claimed.job_id}/events", headers={**headers, "Last-Event-ID": "0"})
     assert resumed_events.status_code == 200
     assert "event: cancelled" in resumed_events.text
+
+
+@pytest.mark.anyio
+async def test_draft_impact_is_computed_from_server_facts(client: httpx.AsyncClient) -> None:
+    headers = await _admin(client)
+    config = {
+        "display_name": "Impact assistant", "objective": "Answer", "instructions": "Use sources",
+        "prohibited_actions": ["Do not guess"], "examples": ["Question"],
+        "model": {"chat_alias": "chat_default", "embedding_alias": "embedding_default", "temperature": 0.0},
+        "retrieval": {"pipeline": "hybrid", "top_k": 8, "rerank_alias": None, "minimum_score": 0.0},
+        "budgets": {"output_tokens": 512, "tool_calls": 1, "timeout_seconds": 30},
+        "evaluation": {"cases": [], "minimum_pass_rate": 1.0, "citation_required": True},
+    }
+    headers["Idempotency-Key"] = "impact-create-01"
+    created = await client.post("/api/v3/agents", json={"slug": "impact-help", "display_name": "Impact", "description": "Impact", "config": config}, headers=headers)
+    agent_id = created.json()["agent_id"]
+    headers["Idempotency-Key"] = "impact-upload-01"
+    first = await client.post(f"/api/v3/agents/{agent_id}/sources", headers=headers, files={"file": ("first.md", b"first", "text/markdown")})
+    asset_id = first.json()["asset_id"]
+    config["evaluation"]["cases"] = [{"case_id": "case", "question": "Question", "expected_source_asset_ids": [asset_id]}]
+    headers["Idempotency-Key"] = "impact-patch-01"
+    await client.patch(f"/api/v3/agents/{agent_id}/draft", json={"version": 2, "config": config}, headers=headers)
+    headers["Idempotency-Key"] = "impact-freeze-01"
+    frozen = await client.post(f"/api/v3/agents/{agent_id}/revisions", json={"draft_version": 3}, headers=headers)
+    assert frozen.status_code == 201
+    impact = await client.get(f"/api/v3/agents/{agent_id}/draft/impact", headers=headers)
+    assert impact.json()["mode"] == "REUSE"
+    assert impact.json()["evaluation_required"] is False
+
+    headers["Idempotency-Key"] = "impact-upload-02"
+    await client.post(f"/api/v3/agents/{agent_id}/sources", headers=headers, files={"file": ("second.md", b"second", "text/markdown")})
+    impact = await client.get(f"/api/v3/agents/{agent_id}/draft/impact", headers=headers)
+    assert impact.json()["mode"] == "INCREMENTAL"
+    assert impact.json()["reusable_asset_ids"] == [asset_id]
+
+    headers["Idempotency-Key"] = "impact-remove-01"
+    removed = await client.delete(f"/api/v3/agents/{agent_id}/sources/{asset_id}", headers=headers)
+    assert removed.status_code == 204
+    impact = await client.get(f"/api/v3/agents/{agent_id}/draft/impact", headers=headers)
+    assert impact.json()["mode"] == "FULL_REBUILD"
+    assert impact.json()["removed_asset_ids"] == [asset_id]
+
+
+@pytest.mark.anyio
+async def test_standard_build_and_retry_routes_preserve_attempt_history(client: httpx.AsyncClient) -> None:
+    headers = await _admin(client)
+    store = client._core_store
+    source = b"source"
+    asset_id = f"asset_{sha256(source).hexdigest()[:16]}"
+    config = {
+        "display_name": "Build assistant", "objective": "Answer", "instructions": "Use sources",
+        "prohibited_actions": ["Do not guess"], "examples": ["Question"],
+        "model": {"chat_alias": "chat_default", "embedding_alias": "embedding_default", "temperature": 0.0},
+        "retrieval": {"pipeline": "hybrid", "top_k": 8, "rerank_alias": None, "minimum_score": 0.0},
+        "budgets": {"output_tokens": 512, "tool_calls": 1, "timeout_seconds": 30},
+        "evaluation": {"cases": [{"case_id": "case", "question": "Question", "expected_source_asset_ids": [asset_id]}], "minimum_pass_rate": 1.0, "citation_required": True},
+    }
+    agent, _draft = store.create_agent(store.principal(headers["Authorization"].removeprefix("Bearer ")), slug="build-help", display_name="Build", description="Build", config=config)
+    store.attach_asset(store.principal(headers["Authorization"].removeprefix("Bearer ")), agent.agent_id, sha256=sha256(source).hexdigest(), size_bytes=len(source), media_type="text/plain", storage_key="assets/test", display_name="source.txt")
+    revision = store.freeze_revision(store.principal(headers["Authorization"].removeprefix("Bearer ")), agent.agent_id, 2)
+    store.approve_revision(store.principal(headers["Authorization"].removeprefix("Bearer ")), revision.revision_id, revision.checksum)
+    headers["Idempotency-Key"] = "standard-build-01"
+    response = await client.post(f"/api/v3/revisions/{revision.revision_id}/build", headers=headers)
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    store.claim_job(worker_id="worker_1")
+    store.complete_job(worker_id="worker_1", job_id=job_id, status="FAILED", error_code="DEPENDENCY_UNAVAILABLE")
+    headers["Idempotency-Key"] = "standard-retry-01"
+    retried = await client.post(f"/api/v3/jobs/{job_id}/retry", headers=headers)
+    assert retried.status_code == 201
+    assert retried.json()["attempt"] == 2
+
+
+@pytest.mark.anyio
+async def test_profile_proposal_api_creates_pending_job(client: httpx.AsyncClient) -> None:
+    headers = await _admin(client)
+    headers["Idempotency-Key"] = "create-proposal-agent"
+    created = await client.post(
+        "/api/v3/agents",
+        json={
+            "slug": "proposal-api",
+            "display_name": "Proposal assistant",
+            "description": "Answers policy",
+            "config": {"objective": "Answer policy"},
+        },
+        headers=headers,
+    )
+    agent_id = created.json()["agent_id"]
+    headers["Idempotency-Key"] = "proposal-api-source"
+    uploaded = await client.post(
+        f"/api/v3/agents/{agent_id}/sources",
+        headers=headers,
+        files={"file": ("policy.md", b"# Policy\n\nUse approved evidence.", "text/markdown")},
+    )
+    assert uploaded.status_code == 201
+
+    headers["Idempotency-Key"] = "proposal-api-job"
+    submitted = await client.post(f"/api/v3/agents/{agent_id}/profile-proposals", headers=headers)
+    assert submitted.status_code == 202
+    assert submitted.json()["job_type"] == "PROFILE_PROPOSAL"
+    assert submitted.json()["status"] == "PENDING"
+
+    result = await client.get(f"/api/v3/profile-proposals/{submitted.json()['job_id']}", headers=headers)
+    assert result.status_code == 200
+    assert result.json() == {"job_id": submitted.json()["job_id"], "status": "PENDING", "proposal": None}

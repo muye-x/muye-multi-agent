@@ -22,11 +22,13 @@ from .models import (
     AgentSummary,
     CursorPage,
     DraftPatchRequest,
+    DraftImpactResponse,
     DraftResponse,
     GrantReplaceRequest,
     LoginRequest,
     JobCreateRequest,
     JobResponse,
+    ProfileProposalResponse,
     MeResponse,
     RevisionApprovalRequest,
     RevisionFreezeRequest,
@@ -209,6 +211,29 @@ def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: Runtim
         )
         return JSONResponse(result.body, status_code=result.status_code)
 
+    @app.get("/api/v3/agents/{agent_id}/draft/impact", response_model=DraftImpactResponse)
+    async def draft_impact(agent_id: str, admin: Principal = Depends(require_admin)) -> DraftImpactResponse:
+        impact = service.draft_impact(admin, agent_id)
+        return DraftImpactResponse(
+            mode=impact.mode,
+            base_revision_id=impact.base_revision_id,
+            added_asset_ids=list(impact.added_asset_ids),
+            removed_asset_ids=list(impact.removed_asset_ids),
+            reusable_asset_ids=list(impact.reusable_asset_ids),
+            evaluation_required=impact.evaluation_required,
+            reasons=list(impact.reasons),
+        )
+
+    @app.post("/api/v3/agents/{agent_id}/profile-proposals", response_model=JobResponse, status_code=202)
+    async def create_profile_proposal(http_request: Request, agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JobResponse:
+        result = service.idempotent(
+            f"profile-proposal:{agent_id}",
+            key,
+            {},
+            lambda: _create_profile_proposal_job(service, admin, agent_id, key, _request_id(http_request)),
+        )
+        return JobResponse.model_validate(result.body)
+
     @app.delete("/api/v3/agents/{agent_id}/draft", status_code=204)
     async def discard_draft(http_request: Request, agent_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> Response:
         service.idempotent(f"draft-discard:{admin.user_id}:{agent_id}", key, {}, lambda: _discard_draft(service, admin, agent_id, _request_id(http_request)))
@@ -242,6 +267,16 @@ def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: Runtim
         result = service.idempotent(f"asset-upload:{admin.user_id}:{agent_id}", key, body, lambda: _attach_asset(service, admin, agent_id, body, _request_id(http_request), stored.reused))
         return SourceUploadResponse.model_validate(result.body)
 
+    @app.delete("/api/v3/agents/{agent_id}/sources/{asset_id}", status_code=204)
+    async def remove_source(http_request: Request, agent_id: str, asset_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> Response:
+        service.idempotent(
+            f"asset-remove:{agent_id}:{asset_id}",
+            key,
+            {},
+            lambda: _remove_source(service, admin, agent_id, asset_id, _request_id(http_request)),
+        )
+        return Response(status_code=204)
+
     @app.post("/api/v3/agents/{agent_id}/revisions", response_model=None, status_code=201)
     async def freeze_revision(http_request: Request, agent_id: str, request: RevisionFreezeRequest, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JSONResponse:
         body = request.model_dump(mode="json")
@@ -273,15 +308,51 @@ def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: Runtim
         )
         return JSONResponse(result.body, status_code=result.status_code)
 
+    @app.post("/api/v3/revisions/{revision_id}/build", response_model=JobResponse, status_code=202)
+    async def build_revision(http_request: Request, revision_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JobResponse:
+        result = service.idempotent(
+            f"revision-build:{revision_id}",
+            key,
+            {},
+            lambda: _create_job(service, admin, revision_id, "BUILD", key, _request_id(http_request), status_code=202),
+        )
+        return JobResponse.model_validate(result.body)
+
+    @app.get("/api/v3/revisions/{revision_id}/evaluation")
+    async def revision_evaluation(revision_id: str, _admin: Principal = Depends(require_admin)) -> dict[str, object]:
+        return service.revision_evaluation(revision_id)
+
     @app.get("/api/v3/jobs/{job_id}", response_model=JobResponse)
     async def job_detail(job_id: str, _admin: Principal = Depends(require_admin)) -> JobResponse:
         return JobResponse.model_validate(_job(service.job_detail(job_id)))
+
+    @app.get("/api/v3/profile-proposals/{job_id}", response_model=ProfileProposalResponse)
+    async def profile_proposal(job_id: str, _admin: Principal = Depends(require_admin)) -> ProfileProposalResponse:
+        job = service.job_detail(job_id)
+        if job.job_type != "PROFILE_PROPOSAL":
+            raise DomainError("NOT_FOUND", "Profile Proposal Job 不存在", status_code=404)
+        proposal = service.profile_proposal(job_id)
+        return ProfileProposalResponse(
+            job_id=job_id,
+            status=job.status,
+            proposal=proposal.model_dump(mode="json") if proposal is not None else None,
+        )
 
     @app.post("/api/v3/jobs/{job_id}/cancel", response_model=JobResponse)
     async def cancel_job(http_request: Request, job_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JobResponse:
         result = service.idempotent(
             f"job-cancel:{job_id}", key, {},
             lambda: _cancel_job(service, admin, job_id, _request_id(http_request)),
+        )
+        return JobResponse.model_validate(result.body)
+
+    @app.post("/api/v3/jobs/{job_id}/retry", response_model=JobResponse, status_code=201)
+    async def retry_job(http_request: Request, job_id: str, key: IdempotencyKey, admin: Principal = Depends(require_admin)) -> JobResponse:
+        result = service.idempotent(
+            f"job-retry:{job_id}",
+            key,
+            {},
+            lambda: _retry_job(service, admin, job_id, key, _request_id(http_request)),
         )
         return JobResponse.model_validate(result.body)
 
@@ -376,6 +447,12 @@ def _attach_asset(service: CoreStore, admin: Principal, agent_id: str, body: dic
     return 201, {"asset_id": asset_id, "sha256": body["sha256"], "size_bytes": body["size_bytes"], "media_type": body["media_type"], "display_name": body["display_name"], "reused": reused or already_registered}
 
 
+def _remove_source(service: CoreStore, admin: Principal, agent_id: str, asset_id: str, request_id: str) -> tuple[int, dict[str, object]]:
+    service.remove_draft_asset(admin, agent_id, asset_id)
+    service.audit(actor_id=admin.user_id, action="remove_source", target_type="asset", target_id=asset_id, request_id=request_id, details={"agent_id": agent_id})
+    return 204, {}
+
+
 def _revision(record: object) -> dict[str, object]:
     """将不可变领域 Revision 映射为公开 API 响应。"""
 
@@ -414,13 +491,32 @@ def _job(record: object) -> dict[str, object]:
     }
 
 
-def _create_job(service: CoreStore, admin: Principal, revision_id: str, job_type: str, idempotency_key: str, request_id: str) -> tuple[int, dict[str, object]]:
+def _create_job(service: CoreStore, admin: Principal, revision_id: str, job_type: str, idempotency_key: str, request_id: str, *, status_code: int = 201) -> tuple[int, dict[str, object]]:
     record = service.create_job(admin, revision_id=revision_id, job_type=job_type, idempotency_key=idempotency_key)
     service.audit(actor_id=admin.user_id, action="create_job", target_type="job", target_id=record.job_id, request_id=request_id, details={"revision_id": revision_id, "job_type": job_type})
-    return 201, _job(record)
+    return status_code, _job(record)
 
 
 def _cancel_job(service: CoreStore, admin: Principal, job_id: str, request_id: str) -> tuple[int, dict[str, object]]:
     record = service.request_job_cancel(admin, job_id)
     service.audit(actor_id=admin.user_id, action="cancel_job", target_type="job", target_id=job_id, request_id=request_id)
     return 200, _job(record)
+
+
+def _retry_job(service: CoreStore, admin: Principal, job_id: str, idempotency_key: str, request_id: str) -> tuple[int, dict[str, object]]:
+    record = service.retry_job(admin, job_id, idempotency_key=idempotency_key)
+    service.audit(
+        actor_id=admin.user_id,
+        action="retry_job",
+        target_type="job",
+        target_id=record.job_id,
+        request_id=request_id,
+        details={"source_job_id": job_id, "attempt": record.attempt},
+    )
+    return 201, _job(record)
+
+
+def _create_profile_proposal_job(service: CoreStore, admin: Principal, agent_id: str, idempotency_key: str, request_id: str) -> tuple[int, dict[str, object]]:
+    record = service.create_profile_proposal_job(admin, agent_id, idempotency_key=idempotency_key)
+    service.audit(actor_id=admin.user_id, action="create_profile_proposal", target_type="job", target_id=record.job_id, request_id=request_id, details={"agent_id": agent_id})
+    return 202, _job(record)

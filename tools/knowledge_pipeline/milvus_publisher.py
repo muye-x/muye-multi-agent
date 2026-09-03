@@ -235,7 +235,7 @@ def _record(chunk: KnowledgeChunkV1, embedding: Sequence[float]) -> dict[str, ob
         "block_ids": chunk.block_ids,
         "chunk_index": chunk.chunk_index,
         "content_hash": chunk.content_hash,
-        "metadata": {"title": chunk.title},
+        "metadata": {"title": chunk.title, "source_asset_id": chunk.source_asset_id},
     }
 
 
