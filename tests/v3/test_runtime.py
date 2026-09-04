@@ -93,6 +93,15 @@ async def test_runtime_keeps_untrusted_document_instruction_out_of_system_prompt
 
 
 @pytest.mark.anyio
+async def test_runtime_rejects_citations_outside_bundle_scope(tmp_path: Path) -> None:
+    bundle, _ = _loaded_bundle(tmp_path)
+    invalid = RuntimeCitationV1(citation_id="cite.invalid", source_asset_id="asset_ffffffffffffffff", locator="page:1")
+    response = await RuntimeService(bundle, _Backend([RetrievalEvidence(invalid, "越界", 1.0)])).invoke(_request())
+    assert response.status == "refused"
+    assert response.error_code == "INVALID_CITATION"
+
+
+@pytest.mark.anyio
 async def test_runtime_stream_uses_v3_sse_contract(tmp_path: Path) -> None:
     bundle, _ = _loaded_bundle(tmp_path)
     citation = RuntimeCitationV1(citation_id="cite.leave", source_asset_id=bundle.revision.source_assets[0].asset_id, locator="page:1")

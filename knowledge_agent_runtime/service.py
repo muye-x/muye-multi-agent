@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from math import isfinite
 from typing import Protocol
 
 from contracts.v3 import RuntimeCitationV1, RuntimeInvokeRequestV1, RuntimeInvokeResponseV1
@@ -147,6 +148,7 @@ class RuntimeService:
 
     async def _retrieve(self, request: RuntimeInvokeRequestV1) -> list[RetrievalEvidence]:
         revision = self._bundle.revision
+        allowed_assets = {asset.asset_id for asset in revision.source_assets}
         evidence: list[RetrievalEvidence] = []
         for resource in self._bundle.resources:
             hits = await self._backend.retrieve(
@@ -155,7 +157,15 @@ class RuntimeService:
                 top_k=revision.retrieval.top_k,
                 pipeline=revision.retrieval.pipeline,
             )
-            evidence.extend(hit for hit in hits if hit.score >= revision.retrieval.minimum_score)
+            for hit in hits:
+                # Runtime 是最终的引用边界；不能信任 Core/检索适配器返回的
+                # citation，即使 Core 自身也执行了同样的校验。
+                if hit.citation.source_asset_id not in allowed_assets:
+                    raise RuntimeInvocationError("INVALID_CITATION", "检索结果引用超出当前资料范围。")
+                if not isinstance(hit.score, (int, float)) or not isfinite(hit.score):
+                    raise RuntimeInvocationError("INVALID_RETRIEVAL", "检索结果分数无效。")
+                if hit.score >= revision.retrieval.minimum_score:
+                    evidence.append(hit)
         return evidence[: revision.retrieval.top_k]
 
     def _system_instruction(self) -> str:
