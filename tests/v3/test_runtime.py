@@ -188,3 +188,14 @@ async def test_core_runtime_invoker_opens_circuit_for_runtime_dependency_errors(
             await invoker.invoke(admin, agent_id=agent.agent_id, request_id=request_id, session_id="session_01234567", task="问题")
     with pytest.raises(DomainError, match="熔断"):
         await invoker.invoke(admin, agent_id=agent.agent_id, request_id="request_0123456789abcdea", session_id="session_01234567", task="问题")
+
+
+@pytest.mark.anyio
+async def test_core_runtime_invoker_stream_falls_back_without_deadlocking() -> None:
+    store = InMemoryCoreStore()
+    admin, agent, revision = _approved_revision(store)
+    store.replace_grants(admin, admin.user_id, [agent.agent_id])
+    invoker = RuntimeInvoker(store, _RuntimeClient(revision, revision.spec.source_assets[0].asset_id))
+    invoker.set_route(RuntimeRoute(agent.agent_id, revision, "http://runtime.test"))
+    chunks = [chunk async for chunk in invoker.stream(admin, agent_id=agent.agent_id, request_id="request_0123456789abcdef", session_id="session_01234567", task="问题")]
+    assert chunks and '"status":"success"' in chunks[0]

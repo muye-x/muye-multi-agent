@@ -11,9 +11,22 @@ import pytest
 
 import muye_core.service as service_module
 from contracts.models import AGENT_ID_PATTERN
-from muye_core.api import create_app
+from contracts.v3 import RuntimeCitationV1, RuntimeInvokeResponseV1
+from muye_core.api import _chat_stream_events, create_app
 from muye_core.service import InMemoryCoreStore
 from muye_core.storage import ArtifactStore, AssetValidationError
+
+
+def test_chat_stream_projection_preserves_v3_event_lifecycle() -> None:
+    result = RuntimeInvokeResponseV1(
+        schema_version="muye.ai/runtime-invoke-response/v1",
+        request_id="request_0123456789abcdef",
+        status="success",
+        content="回答",
+        citations=[RuntimeCitationV1(citation_id="cite.test", source_asset_id="asset_0123456789abcdef", locator="line:1")],
+    )
+    payload = "".join(_chat_stream_events("session_01234567", result))
+    assert payload.index("event: session_start") < payload.index("event: block_delta") < payload.index("event: done") < payload.index("event: session_end")
 
 
 @pytest.fixture

@@ -12,14 +12,15 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Header, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, PlainTextResponse
-from contracts.v3 import RuntimeCitationV1
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from contracts.v3 import ChatStreamEventV1, RuntimeCitationV1
 
 from .models import (
     AccessTokenResponse,
     AgentCreateRequest,
     AgentDetail,
     AgentSummary,
+    ChatStreamRequest,
     CursorPage,
     DraftPatchRequest,
     DraftImpactResponse,
@@ -117,6 +118,21 @@ def create_app(*, store: CoreStore, artifact_root: Path, runtime_invoker: Runtim
             raise DomainError("AGENT_INACTIVE", "Agent Runtime 当前未配置", status_code=409)
         result = await runtime_invoker.invoke(principal, agent_id=agent_id, request_id=_request_id(http_request), session_id=request.session_id, task=request.task)
         return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/api/v3/chat/stream")
+    async def chat_stream(request: ChatStreamRequest, http_request: Request, principal: Principal = Depends(current_principal)) -> StreamingResponse:
+        """以稳定 Chat SSE 契约代理一次受控 Runtime 调用。"""
+
+        if runtime_invoker is None:
+            raise DomainError("AGENT_INACTIVE", "Agent Runtime 当前未配置", status_code=409)
+        events = runtime_invoker.stream(
+            principal,
+            agent_id=request.agent_id,
+            request_id=_request_id(http_request),
+            session_id=request.session_id,
+            task=request.task,
+        )
+        return StreamingResponse(events, media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
     @app.post("/internal/v1/runtime/retrieve")
     async def runtime_retrieve(payload: dict[str, object]) -> dict[str, object]:
@@ -390,6 +406,28 @@ def _valid_request_id(value: str | None) -> str | None:
 
 def _error(code: str, message: str, request_id: str, status_code: int) -> JSONResponse:
     return JSONResponse({"code": code, "message": message, "request_id": request_id}, status_code=status_code)
+
+
+def _chat_stream_events(session_id: str, result: object):
+    """将 Runtime 响应投影为 v3 Chat SSE，避免公开内部响应字段。"""
+
+    sequence = 0
+    yield _encode_chat_event(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="session_start", sequence=sequence, session_id=session_id))
+    sequence += 1
+    if result.status == "success":
+        if result.content:
+            yield _encode_chat_event(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="block_delta", sequence=sequence, session_id=session_id, block_id="block_0000000000000001", delta=result.content))
+            sequence += 1
+        yield _encode_chat_event(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="done", sequence=sequence, session_id=session_id, citations=result.citations or [], total_tokens=0))
+    else:
+        yield _encode_chat_event(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="error", sequence=sequence, session_id=session_id, error_code=result.error_code or "RUNTIME_ERROR", message=result.error_message or "请求失败。"))
+    sequence += 1
+    yield _encode_chat_event(ChatStreamEventV1(schema_version="muye.ai/chat-stream-event/v1", event_type="session_end", sequence=sequence, session_id=session_id))
+
+
+def _encode_chat_event(event: ChatStreamEventV1) -> str:
+    payload = json.dumps(event.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event.event_type}\ndata: {payload}\n\n"
 
 
 def _me(principal: Principal) -> MeResponse:

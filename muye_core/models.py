@@ -136,6 +136,14 @@ class RuntimeInvokeRequest(ApiModel):
     task: str = Field(min_length=1, max_length=20_000)
 
 
+class ChatStreamRequest(ApiModel):
+    """Core 聊天 SSE 的入口参数；Agent ID 不由 Runtime 请求体伪造。"""
+
+    agent_id: str = Field(pattern=r"^agent_[A-Za-z0-9_-]{8,128}$")
+    session_id: str = Field(pattern=r"^session_[A-Za-z0-9_-]{8,128}$")
+    task: str = Field(min_length=1, max_length=20_000)
+
+
 class JobResponse(ApiModel):
     """可恢复 Job 的公开状态；lease owner 不向 API 客户端公开。"""
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import time
 from typing import Protocol
@@ -37,6 +38,8 @@ class RuntimeClient(Protocol):
 
     async def invoke(self, route: RuntimeRoute, request: RuntimeInvokeRequestV1) -> RuntimeInvokeResponseV1: ...
 
+    def stream(self, route: RuntimeRoute, request: RuntimeInvokeRequestV1) -> AsyncIterator[str]: ...
+
 
 class HttpRuntimeClient:
     """只调用已投影 Route 的固定 Runtime HTTP 接口，不附带旧服务 Token。"""
@@ -52,6 +55,17 @@ class HttpRuntimeClient:
             response = await client.post(f"{route.base_url}/invoke", json=request.model_dump(mode="json"))
             response.raise_for_status()
         return RuntimeInvokeResponseV1.model_validate(response.json())
+
+    async def _stream(self, route: RuntimeRoute, request: RuntimeInvokeRequestV1) -> AsyncIterator[str]:
+        timeout = httpx.Timeout(route.revision.spec.budgets.timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", f"{route.base_url}/invoke/stream", json=request.model_dump(mode="json")) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    yield f"{line}\n"
+
+    def stream(self, route: RuntimeRoute, request: RuntimeInvokeRequestV1) -> AsyncIterator[str]:
+        return self._stream(route, request)
 
 
 @dataclass(slots=True)
@@ -115,6 +129,41 @@ class RuntimeInvoker:
                 raise DomainError("RUNTIME_UNAVAILABLE", "Agent Runtime 暂时不可用", status_code=503)
             self._circuits[agent_id] = _Circuit()
             return result
+        except DomainError:
+            raise
+        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+            self._record_failure(agent_id)
+            raise DomainError("RUNTIME_UNAVAILABLE", "Agent Runtime 暂时不可用", status_code=503) from exc
+        finally:
+            semaphore.release()
+
+    async def stream(self, principal: Principal, *, agent_id: str, request_id: str, session_id: str, task: str) -> AsyncIterator[str]:
+        """将已授权 Runtime 的 SSE 逐行转发；不支持流式的测试客户端回退为单次调用。"""
+
+        if not self._store.has_grant(principal.user_id, agent_id):
+            raise DomainError("AUTHORIZATION_ERROR", "当前用户没有该 Agent 的调用权限", status_code=403)
+        route = self._routes.get(agent_id)
+        if route is None:
+            raise DomainError("AGENT_INACTIVE", "Agent 当前未上线", status_code=409)
+        self._ensure_circuit_closed(agent_id)
+        semaphore = self._semaphores[agent_id]
+        try:
+            await asyncio.wait_for(semaphore.acquire(), timeout=5)
+        except TimeoutError as exc:
+            raise DomainError("AGENT_BUSY", "Agent 当前繁忙", status_code=503) from exc
+        request = RuntimeInvokeRequestV1(schema_version="muye.ai/runtime-invoke-request/v1", request_id=request_id, session_id=session_id, user_id=principal.user_id, task=task)
+        try:
+            capabilities = await self._client.capabilities(route)
+            self._verify_capabilities(route, capabilities)
+            stream_method = getattr(self._client, "stream", None)
+            if stream_method is None:
+                result = await self._client.invoke(route, request)
+                self._verify_result(route, request, result)
+                yield result.model_dump_json()
+                return
+            async for chunk in stream_method(route, request):
+                yield chunk
+            self._circuits[agent_id] = _Circuit()
         except DomainError:
             raise
         except (httpx.HTTPError, TimeoutError, ValueError) as exc:
